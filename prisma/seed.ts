@@ -146,14 +146,15 @@ async function main() {
     await db.callHistory.createMany({ data: rows.map((r) => ({ ...r, batchId: batch.id })) });
   }
 
-  await seedDemoWeek();
+  const thisMonday = mondayOf(new Date());
+  await seedDemoWeek(thisMonday);
+  await seedDemoWeek(addDays(thisMonday, 7));
 
   console.log("Seed fertig.");
 }
 
-/** Veröffentlichter Beispielplan für die aktuelle Woche */
-async function seedDemoWeek() {
-  const weekStart = mondayOf(new Date());
+/** Veröffentlichter Beispielplan für eine Woche */
+async function seedDemoWeek(weekStart: Date) {
   const existing = await db.shift.count({ where: { date: { gte: weekStart, lte: addDays(weekStart, 6) } } });
   if (existing > 0) return;
 
