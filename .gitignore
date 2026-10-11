@@ -42,3 +42,10 @@ yarn-error.log*
 next-env.d.ts
 .pgdata
 .next-build
+
+.vercel
+
+# von der Neon-Integration installierte Agent-Skills
+.agents/
+.claude/skills/
+skills-lock.json
