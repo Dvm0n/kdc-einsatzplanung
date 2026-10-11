@@ -1,0 +1,15 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: kdc
+      POSTGRES_PASSWORD: kdc
+      POSTGRES_DB: kdc
+    ports:
+      - "5433:5432"
+    volumes:
+      - kdc-db:/var/lib/postgresql/data
+
+volumes:
+  kdc-db:

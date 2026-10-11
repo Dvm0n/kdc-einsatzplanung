@@ -1,0 +1,307 @@
+// KDC-Einsatzplanung – Datenmodell
+// Zeiten werden als Kalenderdatum (@db.Date) + Minuten seit Mitternacht (Europe/Berlin) gespeichert.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url       = env("DATABASE_URL")
+  // Direkte (nicht gepoolte) Verbindung für Migrationen, z. B. bei Neon
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  ADMIN
+  TEAMLEAD
+  OPERATOR
+}
+
+enum ContractType {
+  FULLTIME
+  PARTTIME
+  MINIJOB
+}
+
+enum Skill {
+  INBOUND
+  OUTBOUND
+}
+
+enum WeekStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum AvailabilityKind {
+  AVAILABLE
+  PREFERRED
+  UNAVAILABLE
+}
+
+enum RequestStatus {
+  PENDING
+  PEER_ACCEPTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum ChangeRequestType {
+  CHANGE_TIME
+  DAY_OFF
+  SWAP
+}
+
+enum AbsenceKind {
+  VACATION
+  OFF
+  SICK
+  OTHER
+}
+
+model User {
+  id            String         @id @default(cuid())
+  email         String         @unique
+  passwordHash  String?
+  role          Role           @default(OPERATOR)
+  active        Boolean        @default(true)
+  inviteToken   String?        @unique
+  inviteExpires DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  employee      Employee?
+  notifications Notification[]
+  auditLogs     AuditLog[]
+}
+
+model Employee {
+  id             String          @id @default(cuid())
+  userId         String?         @unique
+  user           User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  firstName      String
+  lastName       String
+  color          String          @default("#6366f1")
+  contractType   ContractType    @default(PARTTIME)
+  weeklyHours    Float           @default(20)
+  maxHoursPerDay Float           @default(8)
+  skills         Skill[]         @default([INBOUND, OUTBOUND])
+  startDate      DateTime?       @db.Date
+  active         Boolean         @default(true)
+  sortOrder      Int             @default(0)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  shifts         Shift[]
+  availabilities Availability[]
+  absences       AbsenceRequest[]
+  changeRequests ChangeRequest[] @relation("Requester")
+  swapRequests   ChangeRequest[] @relation("SwapPartner")
+}
+
+/// Singleton (id = 1)
+model Settings {
+  id                   Int      @id @default(1)
+  intervalMinutes      Int      @default(30)
+  serviceLevelTarget   Float    @default(0.8) // Anteil der Anrufe ...
+  serviceLevelSeconds  Int      @default(20) // ... die innerhalb von X Sekunden angenommen werden
+  maxOccupancy         Float    @default(0.85)
+  shrinkage            Float    @default(0.25)
+  forecastWeeks        Int      @default(8)
+  wishDeadlineWeekday  Int      @default(3) // 1=Mo … 7=So der Vorwoche
+  wishDeadlineHour     Int      @default(12)
+  federalState         String   @default("NW")
+  breakAfter6hMinutes  Int      @default(30)
+  breakAfter9hMinutes  Int      @default(45)
+  minRestHours         Int      @default(11)
+  maxHoursPerDay       Float    @default(10)
+  updatedAt            DateTime @updatedAt
+}
+
+/// Offizielle Call-Zeiten pro Wochentag (1=Mo … 7=So), mehrere Fenster möglich
+model ServiceHours {
+  id       String @id @default(cuid())
+  weekday  Int
+  startMin Int
+  endMin   Int
+}
+
+model Holiday {
+  id       String   @id @default(cuid())
+  date     DateTime @unique @db.Date
+  name     String
+  closed   Boolean  @default(true)
+  startMin Int?
+  endMin   Int?
+}
+
+model ActivityType {
+  id            String          @id @default(cuid())
+  key           String          @unique
+  name          String
+  color         String
+  isPhoneTime   Boolean         @default(false) // zählt für Inbound-Abdeckung
+  isWorkTime    Boolean         @default(true) // zählt als Arbeitszeit
+  isBreak       Boolean         @default(false)
+  sortOrder     Int             @default(0)
+  segments      ShiftSegment[]
+  templates     ShiftTemplate[]
+}
+
+model ShiftTemplate {
+  id             String       @id @default(cuid())
+  name           String
+  startMin       Int
+  endMin         Int
+  activityTypeId String
+  activityType   ActivityType @relation(fields: [activityTypeId], references: [id])
+  sortOrder      Int          @default(0)
+}
+
+model ScheduleWeek {
+  id          String     @id @default(cuid())
+  weekStart   DateTime   @unique @db.Date // Montag
+  status      WeekStatus @default(DRAFT)
+  version     Int        @default(0)
+  publishedAt DateTime?
+  shifts      Shift[]
+}
+
+model Shift {
+  id             String          @id @default(cuid())
+  weekId         String
+  week           ScheduleWeek    @relation(fields: [weekId], references: [id], onDelete: Cascade)
+  employeeId     String
+  employee       Employee        @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  date           DateTime        @db.Date
+  startMin       Int
+  endMin         Int
+  note           String?
+  segments       ShiftSegment[]
+  changeRequests ChangeRequest[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([employeeId, date])
+  @@index([date])
+}
+
+model ShiftSegment {
+  id             String       @id @default(cuid())
+  shiftId        String
+  shift          Shift        @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  activityTypeId String
+  activityType   ActivityType @relation(fields: [activityTypeId], references: [id])
+  startMin       Int
+  endMin         Int
+}
+
+/// Wiederkehrend (weekday gesetzt, date null) oder Ausnahme für ein Datum (date gesetzt)
+model Availability {
+  id         String           @id @default(cuid())
+  employeeId String
+  employee   Employee         @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  weekday    Int?
+  date       DateTime?        @db.Date
+  startMin   Int
+  endMin     Int
+  kind       AvailabilityKind
+  note       String?
+  createdAt  DateTime         @default(now())
+
+  @@index([employeeId])
+}
+
+model AbsenceRequest {
+  id            String        @id @default(cuid())
+  employeeId    String
+  employee      Employee      @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  kind          AbsenceKind   @default(VACATION)
+  startDate     DateTime      @db.Date
+  endDate       DateTime      @db.Date
+  status        RequestStatus @default(PENDING)
+  comment       String?
+  adminComment  String?
+  decidedAt     DateTime?
+  createdAt     DateTime      @default(now())
+}
+
+model ChangeRequest {
+  id              String            @id @default(cuid())
+  type            ChangeRequestType
+  requesterId     String
+  requester       Employee          @relation("Requester", fields: [requesterId], references: [id], onDelete: Cascade)
+  shiftId         String?
+  shift           Shift?            @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  swapPartnerId   String?
+  swapPartner     Employee?         @relation("SwapPartner", fields: [swapPartnerId], references: [id], onDelete: SetNull)
+  proposedDate    DateTime?         @db.Date
+  proposedStart   Int?
+  proposedEnd     Int?
+  status          RequestStatus     @default(PENDING)
+  comment         String?
+  adminComment    String?
+  decidedAt       DateTime?
+  createdAt       DateTime          @default(now())
+}
+
+model ImportBatch {
+  id        String        @id @default(cuid())
+  fileName  String
+  rowCount  Int
+  fromDate  DateTime      @db.Date
+  toDate    DateTime      @db.Date
+  createdAt DateTime      @default(now())
+  rows      CallHistory[]
+}
+
+model CallHistory {
+  id         String       @id @default(cuid())
+  batchId    String?
+  batch      ImportBatch? @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  date       DateTime     @db.Date
+  startMin   Int
+  offered    Int
+  handled    Int?
+  ahtSeconds Float
+
+  @@unique([date, startMin])
+}
+
+/// Manueller Korrekturfaktor für ein Datum (z. B. +20 % wegen Mailing)
+model ForecastAdjustment {
+  id     String   @id @default(cuid())
+  date   DateTime @unique @db.Date
+  factor Float    @default(1)
+  note   String?
+}
+
+model OutboundTarget {
+  id        String   @id @default(cuid())
+  weekStart DateTime @unique @db.Date
+  hours     Float
+}
+
+model Notification {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String?
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, readAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action    String
+  entity    String
+  entityId  String?
+  data      Json?
+  createdAt DateTime @default(now())
+}
