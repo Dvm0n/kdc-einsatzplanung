@@ -60,8 +60,7 @@ Unterstützt: Datum als `TT.MM.JJJJ`, `JJJJ-MM-TT` oder Excel-Datum, Uhrzeit sep
 ## Deployment (Vercel + Neon)
 
 1. Repository zu GitHub pushen und in Vercel importieren.
-2. Über den Vercel Marketplace eine **Neon**-Datenbank hinzufügen (setzt `DATABASE_URL`; zusätzlich `DIRECT_URL` auf die
-   nicht gepoolte Verbindung setzen).
+2. Über den Vercel Marketplace eine **Neon**-Datenbank hinzufügen (setzt `DATABASE_URL` und `DATABASE_URL_UNPOOLED` automatisch).
 3. Umgebungsvariablen setzen: `AUTH_SECRET`, `APP_URL` (z. B. `https://kdc-planung.vercel.app`), optional `RESEND_API_KEY` und `MAIL_FROM`.
 4. Deploy – das Skript `vercel-build` führt die Migrationen automatisch aus.
 5. Ersten Admin anlegen (lokal mit den Produktions-Variablen):
