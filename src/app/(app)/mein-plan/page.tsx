@@ -26,27 +26,27 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
   if (!user.employeeId) redirect("/plan");
   const sp = await searchParams;
   const weekStart = weekStartOf(sp.w && /^\d{4}-\d{2}-\d{2}$/.test(sp.w) ? parseDateOnly(sp.w) : toDateOnly(new Date()));
-  const data = await loadWeek(weekStart);
-  const me = await db.employee.findUniqueOrThrow({ where: { id: user.employeeId } });
-
-  const published = data.status === "PUBLISHED";
-  const myShifts = published ? data.shifts.filter((s) => s.employeeId === me.id) : [];
-  const acts = Object.fromEntries(data.activities.map((a) => [a.id, a]));
-  const planned = myShifts.reduce((s, sh) => s + workMinutes(sh.segments, acts), 0);
-
-  const [offers, requests] = await Promise.all([
+  const employeeId = user.employeeId;
+  const [data, me, offers, requests] = await Promise.all([
+    loadWeek(weekStart),
+    db.employee.findUniqueOrThrow({ where: { id: employeeId } }),
     db.changeRequest.findMany({
-      where: { type: "SWAP", swapPartnerId: me.id, status: "PENDING" },
+      where: { type: "SWAP", swapPartnerId: employeeId, status: "PENDING" },
       include: { requester: true, shift: true },
       orderBy: { createdAt: "desc" },
     }),
     db.changeRequest.findMany({
-      where: { requesterId: me.id },
+      where: { requesterId: employeeId },
       include: { shift: true, swapPartner: true },
       orderBy: { createdAt: "desc" },
       take: 15,
     }),
   ]);
+
+  const published = data.status === "PUBLISHED";
+  const myShifts = published ? data.shifts.filter((s) => s.employeeId === me.id) : [];
+  const acts = Object.fromEntries(data.activities.map((a) => [a.id, a]));
+  const planned = myShifts.reduce((s, sh) => s + workMinutes(sh.segments, acts), 0);
   const pendingShiftIds = requests.filter((r) => r.status === "PENDING" || r.status === "PEER_ACCEPTED").map((r) => r.shiftId);
 
   const colleagues = data.employees

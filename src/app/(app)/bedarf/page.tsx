@@ -4,7 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { SectionCard } from "@/components/section-card";
 import { Button } from "@/components/ui/button";
 import { db } from "@/lib/db";
-import { computeWeekDemand } from "@/lib/demand";
+import { computeWeekDemand, loadDemandInputs } from "@/lib/demand";
 import { loadWeek } from "@/lib/schedule";
 import { requirePlanner } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
@@ -28,13 +28,14 @@ export default async function DemandPage({ searchParams }: { searchParams: Promi
   const sp = await searchParams;
   const base = sp.w && /^\d{4}-\d{2}-\d{2}$/.test(sp.w) ? parseDateOnly(sp.w) : addDaysUTC(toDateOnly(new Date()), 7);
   const weekStart = weekStartOf(base);
-  const week = await loadWeek(weekStart);
-  const [{ days, hasHistory }, settings, batches, adjustments] = await Promise.all([
-    computeWeekDemand(weekStart, week.shifts, week.activities),
+  const [week, demandInputs, settings, batches, adjustments] = await Promise.all([
+    loadWeek(weekStart),
+    loadDemandInputs(weekStart),
     getSettings(),
     db.importBatch.findMany({ orderBy: { createdAt: "desc" }, take: 20 }),
     db.forecastAdjustment.findMany({ where: { date: { gte: weekStart, lte: addDaysUTC(weekStart, 6) } } }),
   ]);
+  const { days, hasHistory } = await computeWeekDemand(weekStart, week.shifts, week.activities, demandInputs);
   const adjByDate = Object.fromEntries(adjustments.map((a) => [formatDateOnly(a.date), Math.round((a.factor - 1) * 100)]));
   const weekIso = formatDateOnly(weekStart);
   const totalCalls = days.reduce((s, d) => s + d.summary.calls, 0);

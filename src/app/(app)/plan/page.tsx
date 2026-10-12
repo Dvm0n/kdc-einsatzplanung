@@ -1,6 +1,6 @@
 import { EmptyState } from "@/components/page-header";
 import { Planner } from "@/components/planner/planner";
-import { computeWeekDemand } from "@/lib/demand";
+import { computeWeekDemand, loadDemandInputs } from "@/lib/demand";
 import { loadWeek } from "@/lib/schedule";
 import { isPlanner, requireUser } from "@/lib/session";
 import { fmtWeekRange, formatDateOnly, isoWeekNumber, parseDateOnly, toDateOnly, weekStartOf } from "@/lib/time";
@@ -16,7 +16,11 @@ export default async function PlanPage({
 
   const today = toDateOnly(new Date());
   const weekStart = weekStartOf(sp.w && /^\d{4}-\d{2}-\d{2}$/.test(sp.w) ? parseDateOnly(sp.w) : today);
-  const data = await loadWeek(weekStart, { withWarnings: planner });
+  // Wochenplan und Bedarfsdaten gleichzeitig laden
+  const [data, demandInputs] = await Promise.all([
+    loadWeek(weekStart, { withWarnings: planner }),
+    planner ? loadDemandInputs(weekStart) : null,
+  ]);
 
   const view = sp.view === "day" ? "day" : "week";
   const day = sp.d && data.days.includes(sp.d) ? sp.d : data.days.includes(formatDateOnly(today)) ? formatDateOnly(today) : data.days[0];
@@ -32,7 +36,9 @@ export default async function PlanPage({
     );
   }
 
-  const demand = planner ? (await computeWeekDemand(weekStart, data.shifts, data.activities)).days : undefined;
+  const demand = demandInputs
+    ? (await computeWeekDemand(weekStart, data.shifts, data.activities, demandInputs)).days
+    : undefined;
 
   return (
     <Planner

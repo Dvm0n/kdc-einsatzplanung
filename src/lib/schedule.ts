@@ -56,7 +56,7 @@ export async function resolveAvailability(weekStart: Date, employeeIds?: string[
 export async function loadWeek(weekStart: Date, opts: { withWarnings?: boolean } = {}) {
   const days = weekDays(weekStart);
   const weekEnd = days[6];
-  const [settings, week, employees, activities, templates, shifts, prevShifts, absences, serviceHours, holidays] =
+  const [settings, week, employees, activities, templates, shifts, prevShifts, absences, serviceHours, holidays, unavailable] =
     await Promise.all([
       getSettings(),
       db.scheduleWeek.findUnique({ where: { weekStart } }),
@@ -70,6 +70,8 @@ export async function loadWeek(weekStart: Date, opts: { withWarnings?: boolean }
       }),
       db.serviceHours.findMany(),
       db.holiday.findMany({ where: { date: { gte: weekStart, lte: weekEnd } } }),
+      // nur für die Regelprüfung nötig – gleich mitladen statt hinterher
+      opts.withWarnings ? resolveAvailability(weekStart) : Promise.resolve([]),
     ]);
 
   const employeeDTOs: EmployeeDTO[] = employees.map((e) => ({
@@ -116,7 +118,7 @@ export async function loadWeek(weekStart: Date, opts: { withWarnings?: boolean }
   // Grundlage für die Regelprüfung – wird auch im Browser genutzt (Live-Feedback beim Ziehen)
   const rules = opts.withWarnings
     ? {
-        unavailable: await resolveAvailability(weekStart),
+        unavailable,
         previousShifts: prevShifts.map(toShiftDTO),
         closedDates: holidayDTOs.filter((h) => h.closed).map((h) => h.date),
         settings: ruleSettings,

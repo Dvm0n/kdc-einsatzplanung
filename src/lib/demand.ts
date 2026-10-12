@@ -31,22 +31,33 @@ function detectLength(rows: { date: Date; startMin: number }[]) {
   return Number.isFinite(min) ? min : 30;
 }
 
-export async function computeWeekDemand(
-  weekStart: Date,
-  shifts: ShiftDTO[],
-  activities: ActivityDTO[],
-): Promise<{ days: DayDemand[]; hasHistory: boolean }> {
+/** Lädt alles, was die Bedarfsberechnung braucht – unabhängig vom Wochenplan, kann also parallel dazu laufen. */
+export async function loadDemandInputs(weekStart: Date) {
   const settings = await getSettings();
   const days = weekDays(weekStart);
-  const lookback = settings.forecastWeeks * 2;
-  const historyFrom = addDaysUTC(weekStart, -7 * lookback);
-
+  const historyFrom = addDaysUTC(weekStart, -7 * settings.forecastWeeks * 2);
   const [rows, holidays, serviceHours, adjustments] = await Promise.all([
-    db.callHistory.findMany({ where: { date: { gte: historyFrom, lte: addDaysUTC(days[6], -7) } } }),
+    db.callHistory.findMany({
+      where: { date: { gte: historyFrom, lte: addDaysUTC(days[6], -7) } },
+      select: { date: true, startMin: true, offered: true, ahtSeconds: true },
+    }),
     db.holiday.findMany({ where: { date: { gte: historyFrom, lte: days[6] } } }),
     db.serviceHours.findMany(),
     db.forecastAdjustment.findMany({ where: { date: { gte: days[0], lte: days[6] } } }),
   ]);
+  return { settings, rows, holidays, serviceHours, adjustments };
+}
+
+export type DemandInputs = Awaited<ReturnType<typeof loadDemandInputs>>;
+
+export async function computeWeekDemand(
+  weekStart: Date,
+  shifts: ShiftDTO[],
+  activities: ActivityDTO[],
+  preloaded?: DemandInputs,
+): Promise<{ days: DayDemand[]; hasHistory: boolean }> {
+  const { settings, rows, holidays, serviceHours, adjustments } = preloaded ?? (await loadDemandInputs(weekStart));
+  const days = weekDays(weekStart);
 
   const lengthMin = detectLength(rows);
   const history: HistoryRow[] = rows.map((r) => ({

@@ -9,20 +9,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const user = await requireUser();
   const planner = isPlanner(user.role);
 
-  let pending = 0;
-  if (planner) {
-    const [changes, absences] = await Promise.all([
-      db.changeRequest.count({ where: { status: { in: ["PENDING", "PEER_ACCEPTED"] }, type: { not: "SWAP" } } }),
-      db.absenceRequest.count({ where: { status: "PENDING" } }),
-    ]);
-    const swaps = await db.changeRequest.count({ where: { status: "PEER_ACCEPTED", type: "SWAP" } });
-    pending = changes + absences + swaps;
-  }
-
-  const [notifications, unread] = await Promise.all([
+  // alle Abfragen gleichzeitig – jede Runde zur Datenbank kostet Zeit
+  const [notifications, unread, changes, absences, swaps] = await Promise.all([
     db.notification.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 15 }),
     db.notification.count({ where: { userId: user.id, readAt: null } }),
+    planner
+      ? db.changeRequest.count({ where: { status: { in: ["PENDING", "PEER_ACCEPTED"] }, type: { not: "SWAP" } } })
+      : 0,
+    planner ? db.absenceRequest.count({ where: { status: "PENDING" } }) : 0,
+    planner ? db.changeRequest.count({ where: { status: "PEER_ACCEPTED", type: "SWAP" } }) : 0,
   ]);
+  const pending = changes + absences + swaps;
   const notificationItems: NotificationItem[] = notifications.map((n) => ({
     id: n.id,
     title: n.title,
