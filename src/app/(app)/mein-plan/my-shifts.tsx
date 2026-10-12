@@ -2,109 +2,18 @@
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { SegmentStrip } from "@/components/planner/shift-bar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ABSENCE_LABEL } from "@/lib/labels";
-import type { AbsenceDTO, ActivityDTO, ShiftDTO } from "@/lib/planning/types";
+import type { ShiftDTO } from "@/lib/planning/types";
 import { fmtDay, hhmmToMin, minToHHMM, parseDateOnly } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { requestChange } from "./actions";
 
-type Holiday = { date: string; name: string; closed: boolean };
 
-export function MyShifts({
-  days,
-  shifts,
-  activities,
-  absences,
-  holidays,
-  colleagues,
-  pendingShiftIds,
-  today,
-}: {
-  days: string[];
-  shifts: ShiftDTO[];
-  activities: ActivityDTO[];
-  absences: AbsenceDTO[];
-  holidays: Holiday[];
-  colleagues: { id: string; name: string }[];
-  pendingShiftIds: string[];
-  today: string;
-}) {
-  const acts = Object.fromEntries(activities.map((a) => [a.id, a]));
-  const [target, setTarget] = useState<ShiftDTO | null>(null);
-
-  return (
-    <div className="space-y-2">
-      {days.map((d) => {
-        const own = shifts.filter((s) => s.date === d).sort((a, b) => a.startMin - b.startMin);
-        const absence = absences.find((a) => a.startDate <= d && a.endDate >= d);
-        const hol = holidays.find((h) => h.date === d);
-        const past = d < today;
-        return (
-          <div
-            key={d}
-            className={cn(
-              "flex gap-4 rounded-2xl border bg-card p-4",
-              d === today && "border-primary/40 ring-1 ring-primary/20",
-              past && "opacity-60",
-            )}
-          >
-            <div className="w-12 shrink-0 text-center">
-              <div className="text-xs text-muted-foreground uppercase">{fmtDay(parseDateOnly(d), "EEE")}</div>
-              <div className={cn("text-xl font-semibold", d === today && "text-primary")}>{fmtDay(parseDateOnly(d), "dd")}</div>
-            </div>
-            <div className="min-w-0 flex-1 space-y-3">
-              {hol && <div className="text-xs font-medium text-warning">{hol.name}</div>}
-              {absence && <Badge variant="secondary">{ABSENCE_LABEL[absence.kind]}</Badge>}
-              {own.length === 0 && !absence && <div className="py-1 text-sm text-muted-foreground">Frei</div>}
-              {own.map((s) => {
-                const pending = pendingShiftIds.includes(s.id);
-                return (
-                  <div key={s.id} className="space-y-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="font-medium tabular-nums">
-                        {minToHHMM(s.startMin)} – {minToHHMM(s.endMin)}
-                      </div>
-                      {pending ? (
-                        <Badge variant="outline">Antrag offen</Badge>
-                      ) : (
-                        !past && (
-                          <Button variant="ghost" size="sm" onClick={() => setTarget(s)}>
-                            Ändern
-                          </Button>
-                        )
-                      )}
-                    </div>
-                    <SegmentStrip startMin={s.startMin} endMin={s.endMin} segments={s.segments} activities={acts} className="h-2" />
-                    <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                      {s.segments.map((seg, i) => (
-                        <span key={i} className="flex items-center gap-1">
-                          <span className="size-2 rounded-sm" style={{ backgroundColor: acts[seg.activityTypeId]?.color }} />
-                          {minToHHMM(seg.startMin)}–{minToHHMM(seg.endMin)} {acts[seg.activityTypeId]?.name}
-                        </span>
-                      ))}
-                    </div>
-                    {s.note && <p className="text-xs text-muted-foreground">„{s.note}“</p>}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-
-      <ChangeDialog shift={target} onClose={() => setTarget(null)} colleagues={colleagues} />
-    </div>
-  );
-}
-
-function ChangeDialog({
+export function ChangeDialog({
   shift,
   onClose,
   colleagues,

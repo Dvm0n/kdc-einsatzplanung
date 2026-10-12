@@ -6,6 +6,7 @@ import { type ActionResult, fail, zodMessage } from "@/lib/action-result";
 import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { notifyEmployees, notifyPlanners } from "@/lib/notify";
+import { normalizeSegments } from "@/lib/planning/shifts";
 import { requireUser } from "@/lib/session";
 import { fmtDay, minToHHMM, toDateOnly } from "@/lib/time";
 
@@ -17,6 +18,17 @@ const changeSchema = z
     proposedEnd: z.number().int().min(0).max(1440).nullable(),
     swapPartnerId: z.string().nullable(),
     comment: z.string().trim().max(500).optional(),
+    /** Optional: genauer Ablauf aus dem Zeitstrahl (z. B. verschobene Pause) */
+    proposedSegments: z
+      .array(
+        z.object({
+          activityTypeId: z.string().min(1),
+          startMin: z.number().int().min(0).max(1440),
+          endMin: z.number().int().min(0).max(1440),
+        }),
+      )
+      .max(20)
+      .optional(),
   })
   .refine(
     (c) => c.type !== "CHANGE_TIME" || (c.proposedStart != null && c.proposedEnd != null && c.proposedEnd > c.proposedStart),
@@ -49,6 +61,19 @@ export async function requestChange(input: z.input<typeof changeSchema>): Promis
     if (clash) return fail(`${partner.firstName} arbeitet zu dieser Zeit bereits`);
   }
 
+  // Vorgeschlagenen Ablauf prüfen: lückenlos innerhalb der Wunschzeit, nur bekannte Aktivitäten
+  let proposedSegments: { activityTypeId: string; startMin: number; endMin: number }[] | undefined;
+  if (c.type === "CHANGE_TIME" && c.proposedSegments?.length) {
+    const ids = new Set((await db.activityType.findMany({ select: { id: true } })).map((a) => a.id));
+    if (c.proposedSegments.some((s) => !ids.has(s.activityTypeId))) return fail("Unbekannte Aktivität");
+    proposedSegments = normalizeSegments(
+      c.proposedStart!,
+      c.proposedEnd!,
+      c.proposedSegments,
+      c.proposedSegments[0].activityTypeId,
+    );
+  }
+
   const req = await db.changeRequest.create({
     data: {
       type: c.type,
@@ -57,6 +82,7 @@ export async function requestChange(input: z.input<typeof changeSchema>): Promis
       proposedDate: shift.date,
       proposedStart: c.type === "CHANGE_TIME" ? c.proposedStart : null,
       proposedEnd: c.type === "CHANGE_TIME" ? c.proposedEnd : null,
+      proposedSegments,
       swapPartnerId: c.type === "SWAP" ? c.swapPartnerId : null,
       comment: c.comment || null,
     },

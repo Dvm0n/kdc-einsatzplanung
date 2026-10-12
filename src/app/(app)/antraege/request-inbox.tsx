@@ -27,6 +27,7 @@ export type InboxItem = {
   shiftEnd: number | null;
   proposedStart: number | null;
   proposedEnd: number | null;
+  proposedDetail: string | null;
   partner: string | null;
   comment: string | null;
   adminComment: string | null;
@@ -140,6 +141,9 @@ function InboxCard({ item: i }: { item: InboxItem }) {
               </>
             )}
           </div>
+          {i.proposedDetail && (
+            <p className="mt-1 text-xs text-muted-foreground">Neuer Ablauf: {i.proposedDetail}</p>
+          )}
           {i.comment && <p className="mt-1.5 text-sm">„{i.comment}“</p>}
           {i.overlaps.length > 0 && (
             <p className="mt-1.5 text-xs text-warning">Im selben Zeitraum abwesend: {i.overlaps.join(", ")}</p>

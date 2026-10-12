@@ -1,14 +1,14 @@
 import { PageHeader } from "@/components/page-header";
 import { db } from "@/lib/db";
 import { requirePlanner } from "@/lib/session";
-import { formatDateOnly } from "@/lib/time";
+import { formatDateOnly, minToHHMM } from "@/lib/time";
 import { RecordAbsence } from "./record-absence";
 import { RequestInbox, type InboxItem } from "./request-inbox";
 
 export default async function RequestsPage() {
   await requirePlanner();
   const since = new Date(Date.now() - 30 * 86_400_000);
-  const [changes, absences, employees] = await Promise.all([
+  const [changes, absences, employees, activities] = await Promise.all([
     db.changeRequest.findMany({
       where: { OR: [{ status: { in: ["PENDING", "PEER_ACCEPTED"] } }, { decidedAt: { gte: since } }] },
       include: { requester: true, swapPartner: true, shift: true },
@@ -20,7 +20,10 @@ export default async function RequestsPage() {
       orderBy: { createdAt: "desc" },
     }),
     db.employee.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } }),
+    db.activityType.findMany({ select: { id: true, name: true } }),
   ]);
+
+  const actName = Object.fromEntries(activities.map((a) => [a.id, a.name]));
 
   // Überschneidende Abwesenheiten anderer (für die Entscheidung hilfreich)
   const approvedAbsences = await db.absenceRequest.findMany({ where: { status: "APPROVED" }, include: { employee: true } });
@@ -41,6 +44,11 @@ export default async function RequestsPage() {
         shiftEnd: c.shift?.endMin ?? null,
         proposedStart: c.proposedStart,
         proposedEnd: c.proposedEnd,
+        proposedDetail: Array.isArray(c.proposedSegments)
+          ? (c.proposedSegments as { activityTypeId: string; startMin: number; endMin: number }[])
+              .map((s) => `${actName[s.activityTypeId] ?? "?"} ${minToHHMM(s.startMin)}–${minToHHMM(s.endMin)}`)
+              .join(" · ")
+          : null,
         partner: c.swapPartner ? `${c.swapPartner.firstName} ${c.swapPartner.lastName}` : null,
         comment: c.comment,
         adminComment: c.adminComment,
@@ -64,6 +72,7 @@ export default async function RequestsPage() {
         shiftEnd: null,
         proposedStart: null,
         proposedEnd: null,
+        proposedDetail: null,
         partner: null,
         comment: a.comment,
         adminComment: a.adminComment,

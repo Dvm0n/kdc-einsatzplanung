@@ -238,6 +238,8 @@ model ChangeRequest {
   proposedDate    DateTime?         @db.Date
   proposedStart   Int?
   proposedEnd     Int?
+  /// Vorgeschlagener Ablauf der Schicht [{activityTypeId, startMin, endMin}] – aus dem Zeitstrahl in „Mein Plan“
+  proposedSegments Json?
   status          RequestStatus     @default(PENDING)
   comment         String?
   adminComment    String?

@@ -18,7 +18,7 @@ import {
   weekStartOf,
 } from "@/lib/time";
 import { MyRequests, type MyRequest } from "./my-requests";
-import { MyShifts } from "./my-shifts";
+import { MyTimeline, type PendingProposal } from "./my-timeline";
 import { SwapOffers, type SwapOffer } from "./swap-offers";
 
 export default async function MyPlanPage({ searchParams }: { searchParams: Promise<{ w?: string }> }) {
@@ -28,7 +28,7 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
   const weekStart = weekStartOf(sp.w && /^\d{4}-\d{2}-\d{2}$/.test(sp.w) ? parseDateOnly(sp.w) : toDateOnly(new Date()));
   const employeeId = user.employeeId;
   const [data, me, offers, requests] = await Promise.all([
-    loadWeek(weekStart),
+    loadWeek(weekStart, { withWarnings: true }),
     db.employee.findUniqueOrThrow({ where: { id: employeeId } }),
     db.changeRequest.findMany({
       where: { type: "SWAP", swapPartnerId: employeeId, status: "PENDING" },
@@ -47,7 +47,15 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
   const myShifts = published ? data.shifts.filter((s) => s.employeeId === me.id) : [];
   const acts = Object.fromEntries(data.activities.map((a) => [a.id, a]));
   const planned = myShifts.reduce((s, sh) => s + workMinutes(sh.segments, acts), 0);
-  const pendingShiftIds = requests.filter((r) => r.status === "PENDING" || r.status === "PEER_ACCEPTED").map((r) => r.shiftId);
+  const pendingProposals: PendingProposal[] = requests
+    .filter((r) => r.shiftId && (r.status === "PENDING" || r.status === "PEER_ACCEPTED"))
+    .map((r) => ({
+      shiftId: r.shiftId!,
+      type: r.type,
+      proposedStart: r.proposedStart,
+      proposedEnd: r.proposedEnd,
+      proposedSegments: Array.isArray(r.proposedSegments) ? (r.proposedSegments as unknown as PendingProposal["proposedSegments"]) : null,
+    }));
 
   const colleagues = data.employees
     .filter((e) => e.id !== me.id)
@@ -57,7 +65,7 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
   const nav = (delta: number) => `/mein-plan?w=${formatDateOnly(addDaysUTC(weekStart, delta * 7))}`;
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Hallo {me.firstName}</h1>
@@ -117,15 +125,35 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
               </div>
             </div>
           </div>
-          <MyShifts
+          <MyTimeline
+            me={data.employees.find((e) => e.id === me.id) ?? {
+              id: me.id,
+              firstName: me.firstName,
+              lastName: me.lastName,
+              color: me.color,
+              contractType: me.contractType,
+              weeklyHours: me.weeklyHours,
+              maxHoursPerDay: me.maxHoursPerDay,
+              skills: me.skills,
+            }}
             days={data.days}
             shifts={myShifts}
             activities={data.activities}
             absences={data.absences.filter((a) => a.employeeId === me.id)}
             holidays={data.holidays}
+            serviceHours={data.serviceHours}
+            pending={pendingProposals}
             colleagues={colleagues}
-            pendingShiftIds={pendingShiftIds.filter(Boolean) as string[]}
             today={today}
+            rules={
+              data.rules && {
+                // nur eigene Daten an den Browser geben
+                unavailable: data.rules.unavailable.filter((u) => u.employeeId === me.id),
+                previousShifts: data.rules.previousShifts.filter((s) => s.employeeId === me.id),
+                closedDates: data.rules.closedDates,
+                settings: data.rules.settings,
+              }
+            }
           />
         </>
       ) : (

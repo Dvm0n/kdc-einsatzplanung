@@ -1,4 +1,5 @@
 import { BottomNav, SidebarNav, type NavItem } from "@/components/app-nav";
+import { LiveUpdates } from "@/components/live-updates";
 import { NotificationBell, type NotificationItem } from "@/components/notification-bell";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/user-menu";
@@ -80,6 +81,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </div>
 
       <BottomNav items={items} />
+      <LiveUpdates unread={unread} pending={pending} />
     </div>
   );
 }

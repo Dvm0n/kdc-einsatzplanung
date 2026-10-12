@@ -10,7 +10,11 @@ export const authConfig = {
     authorized({ auth, request }) {
       const { pathname } = request.nextUrl;
       const isPublic =
-        pathname.startsWith("/login") || pathname.startsWith("/einladung") || pathname.startsWith("/api/auth");
+        pathname.startsWith("/login") ||
+        pathname.startsWith("/einladung") ||
+        pathname.startsWith("/api/auth") ||
+        // API-Routen prüfen die Anmeldung selbst und antworten mit 401 statt Weiterleitung
+        pathname.startsWith("/api/updates");
       if (isPublic) return true;
       if (!auth?.user) return false;
       if (pathname.startsWith("/admin") || pathname.startsWith("/bedarf") || pathname.startsWith("/antraege")) {

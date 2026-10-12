@@ -6,7 +6,7 @@ import { audit } from "@/lib/audit";
 import { db } from "@/lib/db";
 import { ABSENCE_LABEL } from "@/lib/labels";
 import { notifyEmployees } from "@/lib/notify";
-import { buildSegments } from "@/lib/planning/shifts";
+import { buildSegments, normalizeSegments } from "@/lib/planning/shifts";
 import { requirePlanner } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
 import { fmtDay, formatDateOnly, minToHHMM, weekStartOf } from "@/lib/time";
@@ -56,11 +56,18 @@ export async function decideChange(id: string, approve: boolean, adminComment?: 
       }
       const main = [...durations.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? acts[0].id;
       const settings = await getSettings();
+      // Genauer Ablauf aus dem Zeitstrahl hat Vorrang, sonst neu aufbauen (Pause automatisch)
+      const proposed = Array.isArray(req.proposedSegments)
+        ? (req.proposedSegments as { activityTypeId: string; startMin: number; endMin: number }[])
+        : null;
+      const segments = proposed?.length
+        ? normalizeSegments(start, end, proposed, main)
+        : buildSegments(start, end, main, breakAct?.id ?? null, settings);
       await db.$transaction([
         db.shiftSegment.deleteMany({ where: { shiftId: shift.id } }),
         db.shift.update({
           where: { id: shift.id },
-          data: { startMin: start, endMin: end, segments: { create: buildSegments(start, end, main, breakAct?.id ?? null, settings) } },
+          data: { startMin: start, endMin: end, segments: { create: segments } },
         }),
       ]);
     } else if (req.type === "SWAP") {
