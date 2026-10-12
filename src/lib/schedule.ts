@@ -1,4 +1,6 @@
 import { db } from "@/lib/db";
+import { loadOpenShifts } from "@/lib/open-shifts";
+import { diffShifts, type SnapshotShift } from "@/lib/planning/changes";
 import { validateWeek, type AvailabilityBlock } from "@/lib/planning/rules";
 import type { AbsenceDTO, ActivityDTO, EmployeeDTO, ShiftDTO } from "@/lib/planning/types";
 import { getSettings } from "@/lib/settings";
@@ -56,7 +58,7 @@ export async function resolveAvailability(weekStart: Date, employeeIds?: string[
 export async function loadWeek(weekStart: Date, opts: { withWarnings?: boolean } = {}) {
   const days = weekDays(weekStart);
   const weekEnd = days[6];
-  const [settings, week, employees, activities, templates, shifts, prevShifts, absences, serviceHours, holidays, unavailable] =
+  const [settings, week, employees, activities, templates, shifts, prevShifts, absences, serviceHours, holidays, unavailable, openShifts] =
     await Promise.all([
       getSettings(),
       db.scheduleWeek.findUnique({ where: { weekStart } }),
@@ -72,6 +74,7 @@ export async function loadWeek(weekStart: Date, opts: { withWarnings?: boolean }
       db.holiday.findMany({ where: { date: { gte: weekStart, lte: weekEnd } } }),
       // nur für die Regelprüfung nötig – gleich mitladen statt hinterher
       opts.withWarnings ? resolveAvailability(weekStart) : Promise.resolve([]),
+      loadOpenShifts(weekStart, weekEnd),
     ]);
 
   const employeeDTOs: EmployeeDTO[] = employees.map((e) => ({
@@ -149,7 +152,13 @@ export async function loadWeek(weekStart: Date, opts: { withWarnings?: boolean }
     serviceHours: serviceWindows,
     holidays: holidayDTOs,
     warnings,
+    // „Was hat sich geändert?“ – nur bei veröffentlichten Wochen mit gespeichertem Stand
+    changes:
+      week?.status === "PUBLISHED" && Array.isArray(week.publishedSnapshot)
+        ? diffShifts(week.publishedSnapshot as unknown as SnapshotShift[], shiftDTOs)
+        : [],
     rules,
+    openShifts,
     settings: {
       intervalMinutes: settings.intervalMinutes,
       breakAfter6hMinutes: settings.breakAfter6hMinutes,

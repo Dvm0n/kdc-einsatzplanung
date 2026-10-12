@@ -97,6 +97,9 @@ model Employee {
   absences       AbsenceRequest[]
   changeRequests ChangeRequest[] @relation("Requester")
   swapRequests   ChangeRequest[] @relation("SwapPartner")
+  offeredShifts  OpenShift[]     @relation("OfferedBy")
+  filledShifts   OpenShift[]     @relation("FilledBy")
+  shiftBids      OpenShiftBid[]
 }
 
 /// Singleton (id = 1)
@@ -164,6 +167,8 @@ model ScheduleWeek {
   status      WeekStatus @default(DRAFT)
   version     Int        @default(0)
   publishedAt DateTime?
+  /// Stand der Schichten bei der letzten Veröffentlichung – Grundlage für „Was hat sich geändert?“
+  publishedSnapshot Json?
   shifts      Shift[]
 }
 
@@ -306,4 +311,45 @@ model AuditLog {
   entityId  String?
   data      Json?
   createdAt DateTime @default(now())
+}
+
+enum OpenShiftStatus {
+  OPEN
+  FILLED
+  CANCELLED
+}
+
+/// Schichtbörse: von der Planung ausgeschriebene Schicht oder von einem Operator „an alle“ abgegebene Schicht
+model OpenShift {
+  id            String          @id @default(cuid())
+  date          DateTime        @db.Date
+  startMin      Int
+  endMin        Int
+  /// Ablauf [{activityTypeId, startMin, endMin}]
+  segments      Json
+  note          String?
+  status        OpenShiftStatus @default(OPEN)
+  /// gesetzt, wenn ein Operator eine eigene Schicht abgibt – bei Zuteilung wechselt diese Schicht den Besitzer
+  sourceShiftId String?
+  offeredById   String?
+  offeredBy     Employee?       @relation("OfferedBy", fields: [offeredById], references: [id], onDelete: SetNull)
+  filledById    String?
+  filledBy      Employee?       @relation("FilledBy", fields: [filledById], references: [id], onDelete: SetNull)
+  createdAt     DateTime        @default(now())
+  decidedAt     DateTime?
+  bids          OpenShiftBid[]
+
+  @@index([date, status])
+}
+
+/// Meldung eines Operators „Ich übernehme“
+model OpenShiftBid {
+  id          String    @id @default(cuid())
+  openShiftId String
+  openShift   OpenShift @relation(fields: [openShiftId], references: [id], onDelete: Cascade)
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@unique([openShiftId, employeeId])
 }

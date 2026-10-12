@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { AlertTriangle, Info, PhoneOutgoing } from "lucide-react";
+import { AlertTriangle, Info, PhoneOutgoing, Redo2, Undo2 } from "lucide-react";
 import { toast } from "sonner";
-import { saveShift, saveShiftShapes } from "@/app/(app)/plan/actions";
+import { deleteShift, saveShift, saveShiftShapes } from "@/app/(app)/plan/actions";
 import { Button } from "@/components/ui/button";
 import {
   ContextMenu,
@@ -211,10 +211,112 @@ export function DayTimeline({
     }
     const shape = overrides[d.shift.id];
     if (!shape || sameShape(shape, shapeOf(d.shift))) return;
-    persist([{ shift: d.shift, shape }]);
+    // „Vorher“ ausdrücklich angeben – im aktuellen Stand steckt schon die gezogene Form
+    persist([{ shift: d.shift, shape, before: shapeOf(d.shift) }]);
   }
 
-  function persist(items: { shift: ShiftDTO; shape: ShiftShape }[], message?: string) {
+  /* ---------- Rückgängig / Wiederholen ---------- */
+
+  const history = useRef<{ undo: Step[]; redo: Step[] }>({ undo: [], redo: [] });
+  const [, setHistoryVersion] = useState(0);
+  const bump = () => setHistoryVersion((v) => v + 1);
+
+  function record(step: Step) {
+    history.current.undo.push(step);
+    if (history.current.undo.length > 50) history.current.undo.shift();
+    history.current.redo = [];
+    bump();
+  }
+
+  function apply(step: Step, direction: "undo" | "redo") {
+    const verb = direction === "undo" ? "Rückgängig" : "Wiederholt";
+    if (step.kind === "shapes") {
+      persist(
+        step.items.map((i) => ({ shift: { id: i.id }, shape: direction === "undo" ? i.before : i.after })),
+        `${verb}: ${step.label}`,
+        false,
+      );
+      return;
+    }
+    // neu angelegte Schicht: rückgängig = löschen, wiederholen = erneut anlegen
+    startTransition(async () => {
+      if (direction === "undo") {
+        const r = await deleteShift(step.id);
+        if (!r.ok) toast.error(r.error);
+        else toast.success(`${verb}: ${step.label}`);
+      } else {
+        const r = await saveShift({
+          employeeId: step.employeeId,
+          date: step.date,
+          ...step.shape,
+          activityTypeId: step.shape.segments[0].activityTypeId,
+          autoBreak: false,
+        });
+        if (!r.ok) toast.error(r.error);
+        else {
+          step.id = r.data!.id;
+          toast.success(`${verb}: ${step.label}`);
+        }
+      }
+    });
+  }
+
+  function undo() {
+    const step = history.current.undo.pop();
+    if (!step) return;
+    history.current.redo.push(step);
+    bump();
+    apply(step, "undo");
+  }
+
+  function redo() {
+    const step = history.current.redo.pop();
+    if (!step) return;
+    history.current.undo.push(step);
+    bump();
+    apply(step, "redo");
+  }
+
+  useEffect(() => {
+    if (!canEdit) return;
+    function onKey(e: KeyboardEvent) {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(t.tagName))) return;
+      if (document.querySelector("[role=dialog]")) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) {
+        e.preventDefault();
+        undoRef.current();
+      } else if (k === "y" || (k === "z" && e.shiftKey)) {
+        e.preventDefault();
+        redoRef.current();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [canEdit]);
+  const undoRef = useRef(undo);
+  const redoRef = useRef(redo);
+  undoRef.current = undo;
+  redoRef.current = redo;
+
+  function persist(
+    items: { shift: Pick<ShiftDTO, "id">; shape: ShiftShape; before?: ShiftShape }[],
+    message?: string,
+    track = true,
+  ) {
+    if (track) {
+      const label = message ?? "Zeiten geändert";
+      record({
+        kind: "shapes",
+        label,
+        items: items.map((i) => {
+          const cur = shifts.find((s) => s.id === i.shift.id)!;
+          return { id: i.shift.id, before: i.before ?? shapeOf(cur), after: i.shape };
+        }),
+      });
+    }
     setOverrides((o) => ({ ...o, ...Object.fromEntries(items.map((i) => [i.shift.id, i.shape])) }));
     startTransition(async () => {
       const r = await saveShiftShapes(
@@ -287,8 +389,19 @@ export function DayTimeline({
           autoBreak: false,
           segments: [block],
         });
-        if (!r.ok) toast.error(r.error);
-        else toast.success(label);
+        if (!r.ok) {
+          toast.error(r.error);
+          return;
+        }
+        toast.success(label);
+        record({
+          kind: "create",
+          label,
+          id: r.data!.id,
+          employeeId: ctx.employeeId,
+          date,
+          shape: { startMin: start, endMin: end, segments: [block] },
+        });
       });
     }
   }
@@ -319,6 +432,28 @@ export function DayTimeline({
   return (
     <TooltipProvider delayDuration={150}>
       <div className="space-y-4">
+        {canEdit && (
+          <div className="-mb-2 flex items-center justify-end gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={undo}
+              disabled={history.current.undo.length === 0}
+              title={history.current.undo.at(-1) ? `Rückgängig: ${history.current.undo.at(-1)!.label} (Strg+Z)` : "Rückgängig (Strg+Z)"}
+            >
+              <Undo2 /> Rückgängig
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={redo}
+              disabled={history.current.redo.length === 0}
+              title="Wiederholen (Strg+Y)"
+            >
+              <Redo2 /> Wiederholen
+            </Button>
+          </div>
+        )}
         <div className="overflow-x-auto rounded-2xl border bg-card">
           <div className="min-w-[760px]">
             {/* Zeitachse */}
@@ -612,6 +747,12 @@ export function DayTimeline({
             shifts={dayShifts}
             employees={data.employees}
             outboundId={outboundId}
+            onApply={(items, message) =>
+              persist(
+                items.map(({ id, startMin, endMin, segments }) => ({ shift: { id }, shape: { startMin, endMin, segments } })),
+                message,
+              )
+            }
           />
         )}
       </div>
@@ -649,3 +790,7 @@ function sameShape(a: ShiftShape, b: ShiftShape) {
     )
   );
 }
+
+type Step =
+  | { kind: "shapes"; label: string; items: { id: string; before: ShiftShape; after: ShiftShape }[] }
+  | { kind: "create"; label: string; id: string; employeeId: string; date: string; shape: ShiftShape };

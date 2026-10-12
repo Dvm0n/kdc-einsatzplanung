@@ -17,7 +17,7 @@ export async function GET(req: Request) {
   const since = sinceParam && !Number.isNaN(Date.parse(sinceParam)) ? new Date(sinceParam) : new Date(Date.now() - 60_000);
   const planner = isPlanner(user.role);
 
-  const [fresh, unread, changes, absences, swaps] = await Promise.all([
+  const [fresh, unread, changes, absences, swaps, bids] = await Promise.all([
     db.notification.findMany({
       where: { userId: user.id, createdAt: { gt: since } },
       orderBy: { createdAt: "desc" },
@@ -28,13 +28,15 @@ export async function GET(req: Request) {
     planner ? db.changeRequest.count({ where: { status: { in: ["PENDING", "PEER_ACCEPTED"] }, type: { not: "SWAP" } } }) : 0,
     planner ? db.absenceRequest.count({ where: { status: "PENDING" } }) : 0,
     planner ? db.changeRequest.count({ where: { status: "PEER_ACCEPTED", type: "SWAP" } }) : 0,
+    // Schichtbörse: offene Schichten mit Meldungen warten auf Zuteilung
+    planner ? db.openShift.count({ where: { status: "OPEN", bids: { some: {} } } }) : 0,
   ]);
 
   return NextResponse.json(
     {
       now: new Date().toISOString(),
       unread,
-      pending: changes + absences + swaps,
+      pending: changes + absences + swaps + bids,
       fresh: fresh.map((n) => ({ ...n, createdAt: n.createdAt.toISOString() })),
     },
     { headers: { "Cache-Control": "no-store" } },

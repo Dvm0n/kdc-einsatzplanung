@@ -9,6 +9,8 @@ import { notifyEmployees, notifyUsers } from "@/lib/notify";
 import { buildSegments, normalizeSegments } from "@/lib/planning/shifts";
 import { computeWeekDemand } from "@/lib/demand";
 import { autoSchedule } from "@/lib/planning/autoschedule";
+import { toSnapshot } from "@/lib/planning/changes";
+import { loadEdgeHistory } from "@/lib/report";
 import { getOrCreateWeek, loadWeek, resolveAvailability, toShiftDTO } from "@/lib/schedule";
 import { requirePlanner } from "@/lib/session";
 import { getSettings } from "@/lib/settings";
@@ -54,7 +56,7 @@ function revalidatePlan() {
   revalidatePath("/mein-plan");
 }
 
-export async function saveShift(input: ShiftInput): Promise<ActionResult> {
+export async function saveShift(input: ShiftInput): Promise<ActionResult<{ id: string }>> {
   const user = await requirePlanner();
   const p = shiftSchema.safeParse(input);
   if (!p.success) return fail(zodMessage(p.error));
@@ -82,6 +84,7 @@ export async function saveShift(input: ShiftInput): Promise<ActionResult> {
 
   const week = await getOrCreateWeek(weekStart);
   const affected = new Set([s.employeeId]);
+  let savedId = s.id ?? "";
 
   if (s.id) {
     const before = await db.shift.findUnique({ where: { id: s.id } });
@@ -103,22 +106,24 @@ export async function saveShift(input: ShiftInput): Promise<ActionResult> {
       }),
     ]);
   } else {
-    await db.shift.create({
-      data: {
-        weekId: week.id,
-        employeeId: s.employeeId,
-        date,
-        startMin: s.startMin,
-        endMin: s.endMin,
-        note: s.note || null,
-        segments: { create: segments },
-      },
-    });
+    savedId = (
+      await db.shift.create({
+        data: {
+          weekId: week.id,
+          employeeId: s.employeeId,
+          date,
+          startMin: s.startMin,
+          endMin: s.endMin,
+          note: s.note || null,
+          segments: { create: segments },
+        },
+      })
+    ).id;
   }
   await audit(user.id, s.id ? "update" : "create", "Shift", s.id ?? null, JSON.parse(JSON.stringify({ ...s, segments })));
   await touchWeek(weekStart, [...affected]);
   revalidatePlan();
-  return { ok: true, message: s.id ? "Schicht aktualisiert" : "Schicht angelegt" };
+  return { ok: true, message: s.id ? "Schicht aktualisiert" : "Schicht angelegt", data: { id: savedId } };
 }
 
 const shapeSchema = z.array(
@@ -335,6 +340,7 @@ export async function generateProposal(
     activityIds: { inbound: inbound.id, outbound: outbound?.id ?? null, break: brk?.id ?? null },
     settings: { ...settings, intervalMinutes: settings.intervalMinutes },
     options: { fillOutbound: opts.fillOutbound },
+    fairness: { windows: data.serviceHours, history: await loadEdgeHistory(weekStart) },
   });
 
   for (const s of result.shifts) {
@@ -368,9 +374,19 @@ export async function publishWeek(weekStartIso: string): Promise<ActionResult> {
   const user = await requirePlanner();
   const weekStart = parseDateOnly(weekStartIso);
   const week = await getOrCreateWeek(weekStart);
+  // Stand merken – Grundlage für „Was hat sich geändert?“
+  const current = await db.shift.findMany({
+    where: { date: { gte: weekStart, lte: addDaysUTC(weekStart, 6) } },
+    include: { segments: true },
+  });
   await db.scheduleWeek.update({
     where: { id: week.id },
-    data: { status: "PUBLISHED", publishedAt: new Date(), version: { increment: 1 } },
+    data: {
+      status: "PUBLISHED",
+      publishedAt: new Date(),
+      version: { increment: 1 },
+      publishedSnapshot: JSON.parse(JSON.stringify(toSnapshot(current.map(toShiftDTO)))),
+    },
   });
   const users = await db.user.findMany({ where: { active: true, employee: { isNot: null } }, select: { id: true } });
   await notifyUsers(

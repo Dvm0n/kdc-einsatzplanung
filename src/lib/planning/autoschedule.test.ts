@@ -110,3 +110,21 @@ describe("Planvorschlag", () => {
     expect(r.shifts.some((s) => s.employeeId === "a" && s.date === DATES[0])).toBe(false);
   });
 });
+
+describe("Planvorschlag – faire Verteilung", () => {
+  it("gibt Randzeiten bevorzugt an Kollegen mit wenigen Früh-/Spätschichten", () => {
+    const windows = [1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: h(8), endMin: h(18) }));
+    const oneDay = [day(DATES[0], (m) => (m < h(9) ? 1 : 0))]; // nur die erste Stunde braucht jemanden
+    const run = (history: Record<string, { early: number; late: number; shifts: number }>) =>
+      autoSchedule(
+        base({
+          days: oneDay,
+          employees: [emp("a", 20), emp("b", 20)],
+          options: { fillOutbound: false },
+          fairness: { windows, history },
+        }),
+      ).shifts[0]?.employeeId;
+    expect(run({ a: { early: 8, late: 0, shifts: 10 }, b: { early: 0, late: 0, shifts: 10 } })).toBe("b");
+    expect(run({ a: { early: 0, late: 0, shifts: 10 }, b: { early: 8, late: 0, shifts: 10 } })).toBe("a");
+  });
+});

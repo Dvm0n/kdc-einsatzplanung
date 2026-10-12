@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -11,6 +11,8 @@ import {
   Copy,
   Eraser,
   Info,
+  Eye,
+  EyeOff,
   Printer,
   Send,
   Undo2,
@@ -28,13 +30,15 @@ import {
 } from "@/components/ui/dropdown-menu";
 import type { ShiftDTO } from "@/lib/planning/types";
 import type { WeekData } from "@/lib/schedule";
-import { addDaysUTC, fmtDay, fmtWeekRange, formatDateOnly, isoWeekNumber, parseDateOnly } from "@/lib/time";
+import { addDaysUTC, fmtDay, fmtWeekRange, formatDateOnly, isoWeekday, isoWeekNumber, parseDateOnly } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { DayDemand } from "@/lib/demand";
 import { DayTimeline } from "./day-timeline";
 import { ProposalButton } from "./proposal-button";
 import { ActivityLegend } from "./shift-bar";
 import { draftFromShift, ShiftSheet, type ShiftDraft } from "./shift-sheet";
+import { CreateOpenShiftDialog, OpenShiftDialog } from "./open-shift-dialogs";
+import type { OpenShiftDTO } from "@/lib/open-shifts";
 import { WeekGrid } from "./week-grid";
 
 export function Planner({
@@ -58,6 +62,36 @@ export function Planner({
   const [sheetOpen, setSheetOpen] = useState(false);
   const [draft, setDraft] = useState<ShiftDraft | null>(null);
   const [showWarnings, setShowWarnings] = useState(false);
+  const [showClosed, setShowClosed] = useState(false);
+  const [openShiftView, setOpenShiftView] = useState<OpenShiftDTO | null>(null);
+  const [createOpenDate, setCreateOpenDate] = useState<string | null>(null);
+
+  /** Wer kann eine offene Schicht nicht übernehmen? (Überschneidung oder Abwesenheit) */
+  function openShiftConflicts(o: OpenShiftDTO): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const e of data.employees) {
+      const clash = data.shifts.some(
+        (s) => s.employeeId === e.id && s.date === o.date && s.id !== o.sourceShiftId && s.startMin < o.endMin && s.endMin > o.startMin,
+      );
+      const absent = data.absences.some((a) => a.employeeId === e.id && a.startDate <= o.date && a.endDate >= o.date);
+      if (clash) out[e.id] = "arbeitet zu dieser Zeit bereits";
+      else if (absent) out[e.id] = "ist abwesend";
+    }
+    return out;
+  }
+  useEffect(() => {
+    try {
+      setShowClosed(localStorage.getItem("kdc.showClosedDays") === "1");
+    } catch {}
+  }, []);
+  function toggleClosed() {
+    setShowClosed((v) => {
+      try {
+        localStorage.setItem("kdc.showClosedDays", v ? "0" : "1");
+      } catch {}
+      return !v;
+    });
+  }
   const [pending, startTransition] = useTransition();
 
   const weekStart = parseDateOnly(data.weekStart);
@@ -100,6 +134,13 @@ export function Planner({
     });
 
   const demandByDate = demand ? Object.fromEntries(demand.map((d) => [d.date, d])) : undefined;
+
+  // Tage ohne Call-Zeiten (z. B. Sa/So) standardmäßig ausblenden – außer es liegen dort Schichten
+  // (Feiertage unter der Woche bleiben sichtbar – dort steht der Feiertagshinweis)
+  const closedDays = data.days.filter((d) => !data.serviceHours.some((w) => w.weekday === isoWeekday(parseDateOnly(d))));
+  const visibleDays = data.days.filter(
+    (d) => showClosed || !closedDays.includes(d) || data.shifts.some((s) => s.date === d) || d === day,
+  );
   const errors = data.warnings.filter((w) => w.level === "error").length;
   const warns = data.warnings.filter((w) => w.level === "warning").length;
   const empName = Object.fromEntries(data.employees.map((e) => [e.id, `${e.firstName} ${e.lastName}`]));
@@ -138,6 +179,17 @@ export function Planner({
         </div>
 
         <div className="print-hidden flex flex-wrap items-center gap-2">
+          {closedDays.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => toggleClosed()}
+              title={showClosed ? "Geschlossene Tage ausblenden" : "Geschlossene Tage einblenden"}
+            >
+              {showClosed ? <EyeOff /> : <Eye />}
+              {closedDays.map((d) => fmtDay(parseDateOnly(d), "EEEEEE")).join("/")}
+            </Button>
+          )}
           <Button variant="ghost" size="icon" aria-label="Drucken" onClick={() => window.print()}>
             <Printer />
           </Button>
@@ -238,7 +290,7 @@ export function Planner({
 
       {view === "day" && (
         <div className="flex gap-1 overflow-x-auto">
-          {data.days.map((dd) => (
+          {visibleDays.map((dd) => (
             <Link
               key={dd}
               href={href({ d: dd })}
@@ -262,6 +314,9 @@ export function Planner({
           onCreate={openCreate}
           onOpenDay={(d) => router.push(href({ view: "day", d }))}
           demandByDate={demandByDate}
+          visibleDays={visibleDays}
+          onOpenShift={setOpenShiftView}
+          onCreateOpenShift={setCreateOpenDate}
         />
       ) : (
         <DayTimeline
@@ -285,6 +340,24 @@ export function Planner({
       </div>
 
       {canEdit && <ShiftSheet open={sheetOpen} onOpenChange={setSheetOpen} initial={draft} data={data} />}
+      <OpenShiftDialog
+        shift={openShiftView}
+        onClose={() => setOpenShiftView(null)}
+        activities={data.activities}
+        employees={data.employees}
+        planner={canEdit}
+        myEmployeeId={highlightEmployeeId}
+        conflicts={openShiftView ? openShiftConflicts(openShiftView) : undefined}
+      />
+      {canEdit && (
+        <CreateOpenShiftDialog
+          date={createOpenDate}
+          days={visibleDays}
+          onClose={() => setCreateOpenDate(null)}
+          activities={data.activities}
+          templates={data.templates}
+        />
+      )}
     </div>
   );
 }

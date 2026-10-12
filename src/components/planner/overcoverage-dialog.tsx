@@ -1,14 +1,12 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useState } from "react";
 import { PhoneOutgoing } from "lucide-react";
-import { toast } from "sonner";
-import { saveShiftShapes } from "@/app/(app)/plan/actions";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { applySuggestions, type OutboundSuggestion } from "@/lib/planning/overcoverage";
-import type { EmployeeDTO, ShiftDTO } from "@/lib/planning/types";
+import type { EmployeeDTO, SegmentDTO, ShiftDTO } from "@/lib/planning/types";
 import { minToHHMM } from "@/lib/time";
 
 export function OvercoverageDialog({
@@ -18,6 +16,7 @@ export function OvercoverageDialog({
   shifts,
   employees,
   outboundId,
+  onApply,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
@@ -25,9 +24,11 @@ export function OvercoverageDialog({
   shifts: ShiftDTO[];
   employees: EmployeeDTO[];
   outboundId: string;
+  /** Übernimmt die Änderung (inkl. Rückgängig-Verlauf in der Tagesansicht) */
+  onApply: (items: { id: string; startMin: number; endMin: number; segments: SegmentDTO[] }[], message: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
-  const [pending, startTransition] = useTransition();
+
   const name = Object.fromEntries(employees.map((e) => [e.id, `${e.firstName} ${e.lastName}`]));
 
   useEffect(() => {
@@ -43,15 +44,8 @@ export function OvercoverageDialog({
       const s = shifts.find((x) => x.id === id)!;
       return { id, startMin: s.startMin, endMin: s.endMin, segments };
     });
-    startTransition(async () => {
-      const r = await saveShiftShapes(items, `${hours.toLocaleString("de-DE")} h auf Outbound umgestellt`);
-      if (!r.ok) {
-        toast.error(r.error);
-        return;
-      }
-      toast.success(r.message);
-      onOpenChange(false);
-    });
+    onApply(items, `${hours.toLocaleString("de-DE")} h auf Outbound umgestellt`);
+    onOpenChange(false);
   }
 
   return (
@@ -89,7 +83,7 @@ export function OvercoverageDialog({
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Abbrechen
           </Button>
-          <Button onClick={apply} disabled={pending || selected.size === 0}>
+          <Button onClick={apply} disabled={selected.size === 0}>
             <PhoneOutgoing /> {hours.toLocaleString("de-DE")} h auf Outbound
           </Button>
         </DialogFooter>

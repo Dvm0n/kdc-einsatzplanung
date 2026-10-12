@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import type { ShiftDTO } from "@/lib/planning/types";
 import { fmtDay, hhmmToMin, minToHHMM, parseDateOnly } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { offerShift } from "@/app/(app)/plan/open-shift-actions";
 import { requestChange } from "./actions";
 
 
@@ -22,7 +23,7 @@ export function ChangeDialog({
   onClose: () => void;
   colleagues: { id: string; name: string }[];
 }) {
-  const [type, setType] = useState<"CHANGE_TIME" | "DAY_OFF" | "SWAP">("CHANGE_TIME");
+  const [type, setType] = useState<"CHANGE_TIME" | "DAY_OFF" | "SWAP" | "OFFER">("CHANGE_TIME");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [partner, setPartner] = useState<string>("");
@@ -36,14 +37,17 @@ export function ChangeDialog({
   function submit() {
     if (!shift) return;
     startTransition(async () => {
-      const r = await requestChange({
-        shiftId: shift.id,
-        type,
-        proposedStart: type === "CHANGE_TIME" && start ? hhmmToMin(start) : null,
-        proposedEnd: type === "CHANGE_TIME" && end ? hhmmToMin(end) : null,
-        swapPartnerId: type === "SWAP" ? partner || null : null,
-        comment,
-      });
+      const r =
+        type === "OFFER"
+          ? await offerShift(shift.id, comment)
+          : await requestChange({
+              shiftId: shift.id,
+              type,
+              proposedStart: type === "CHANGE_TIME" && start ? hhmmToMin(start) : null,
+              proposedEnd: type === "CHANGE_TIME" && end ? hhmmToMin(end) : null,
+              swapPartnerId: type === "SWAP" ? partner || null : null,
+              comment,
+            });
       if (!r.ok) {
         toast.error(r.error);
         return;
@@ -57,7 +61,8 @@ export function ChangeDialog({
   const options = [
     { k: "CHANGE_TIME", label: "Andere Zeit", desc: "Ich kann nur zu einer anderen Uhrzeit" },
     { k: "DAY_OFF", label: "Frei nehmen", desc: "Ich kann an diesem Tag nicht" },
-    { k: "SWAP", label: "Abgeben", desc: "Kollegin / Kollege übernimmt" },
+    { k: "SWAP", label: "Abgeben", desc: "Bestimmte Person übernimmt" },
+    { k: "OFFER", label: "An alle", desc: "In die Schichtbörse stellen" },
   ] as const;
 
   return (
@@ -79,7 +84,7 @@ export function ChangeDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {options.map((o) => (
               <button
                 key={o.k}
@@ -115,6 +120,13 @@ export function ChangeDialog({
             </div>
           )}
 
+          {type === "OFFER" && (
+            <p className="text-xs text-muted-foreground">
+              Alle Kolleg:innen sehen die Schicht in der Schichtbörse und können sich melden. Du bleibst eingeplant, bis die
+              Planung jemanden zuteilt.
+            </p>
+          )}
+
           {type === "SWAP" && (
             <div className="space-y-1.5">
               <span className="text-xs font-medium text-muted-foreground">Wer soll übernehmen?</span>
@@ -144,7 +156,7 @@ export function ChangeDialog({
             Abbrechen
           </Button>
           <Button onClick={submit} disabled={pending}>
-            {pending ? "Senden …" : "Antrag senden"}
+            {pending ? "Senden …" : type === "OFFER" ? "In die Börse stellen" : "Antrag senden"}
           </Button>
         </DialogFooter>
       </DialogContent>

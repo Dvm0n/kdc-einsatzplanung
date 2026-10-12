@@ -1,14 +1,16 @@
 import { PageHeader } from "@/components/page-header";
 import { db } from "@/lib/db";
 import { requirePlanner } from "@/lib/session";
-import { formatDateOnly, minToHHMM } from "@/lib/time";
+import { formatDateOnly, minToHHMM, parseDateOnly, toDateOnly } from "@/lib/time";
 import { RecordAbsence } from "./record-absence";
 import { RequestInbox, type InboxItem } from "./request-inbox";
+import { BoerseInbox } from "./boerse-inbox";
+import { loadOpenShifts } from "@/lib/open-shifts";
 
 export default async function RequestsPage() {
   await requirePlanner();
   const since = new Date(Date.now() - 30 * 86_400_000);
-  const [changes, absences, employees, activities] = await Promise.all([
+  const [changes, absences, employees, activities, openShifts] = await Promise.all([
     db.changeRequest.findMany({
       where: { OR: [{ status: { in: ["PENDING", "PEER_ACCEPTED"] } }, { decidedAt: { gte: since } }] },
       include: { requester: true, swapPartner: true, shift: true },
@@ -20,10 +22,38 @@ export default async function RequestsPage() {
       orderBy: { createdAt: "desc" },
     }),
     db.employee.findMany({ where: { active: true }, orderBy: { sortOrder: "asc" } }),
-    db.activityType.findMany({ select: { id: true, name: true } }),
+    db.activityType.findMany({ orderBy: { sortOrder: "asc" } }),
+    loadOpenShifts(toDateOnly(new Date())),
   ]);
 
   const actName = Object.fromEntries(activities.map((a) => [a.id, a.name]));
+
+  // Schichtbörse: wer kann welche offene Schicht nicht übernehmen?
+  const openDates = [...new Set(openShifts.map((o) => o.date))].map(parseDateOnly);
+  const [dayShifts, dayAbsences] = openDates.length
+    ? await Promise.all([
+        db.shift.findMany({ where: { date: { in: openDates } }, select: { id: true, employeeId: true, date: true, startMin: true, endMin: true } }),
+        db.absenceRequest.findMany({
+          where: { status: "APPROVED", OR: openDates.map((d) => ({ startDate: { lte: d }, endDate: { gte: d } })) },
+        }),
+      ])
+    : [[], []];
+  const boerseConflicts: Record<string, Record<string, string>> = {};
+  for (const o of openShifts) {
+    const m: Record<string, string> = {};
+    for (const e of employees) {
+      const clash = dayShifts.some(
+        (s) =>
+          s.employeeId === e.id && formatDateOnly(s.date) === o.date && s.id !== o.sourceShiftId && s.startMin < o.endMin && s.endMin > o.startMin,
+      );
+      const absent = dayAbsences.some(
+        (a) => a.employeeId === e.id && formatDateOnly(a.startDate) <= o.date && formatDateOnly(a.endDate) >= o.date,
+      );
+      if (clash) m[e.id] = "arbeitet zu dieser Zeit bereits";
+      else if (absent) m[e.id] = "ist abwesend";
+    }
+    boerseConflicts[o.id] = m;
+  }
 
   // Überschneidende Abwesenheiten anderer (für die Entscheidung hilfreich)
   const approvedAbsences = await db.absenceRequest.findMany({ where: { status: "APPROVED" }, include: { employee: true } });
@@ -90,6 +120,21 @@ export default async function RequestsPage() {
         title="Anträge"
         description="Änderungswünsche, Schichttausch und Urlaub. Genehmigte Änderungen werden direkt in den Plan übernommen."
         actions={<RecordAbsence employees={employees.map((e) => ({ id: e.id, name: `${e.firstName} ${e.lastName}` }))} />}
+      />
+      <BoerseInbox
+        shifts={openShifts}
+        activities={activities.map(({ id, key, name, color, isPhoneTime, isWorkTime, isBreak }) => ({ id, key, name, color, isPhoneTime, isWorkTime, isBreak }))}
+        employees={employees.map((e) => ({
+          id: e.id,
+          firstName: e.firstName,
+          lastName: e.lastName,
+          color: e.color,
+          contractType: e.contractType,
+          weeklyHours: e.weeklyHours,
+          maxHoursPerDay: e.maxHoursPerDay,
+          skills: e.skills,
+        }))}
+        conflicts={boerseConflicts}
       />
       <RequestInbox items={items} />
     </div>

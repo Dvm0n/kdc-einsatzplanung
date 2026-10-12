@@ -18,6 +18,9 @@ import {
   weekStartOf,
 } from "@/lib/time";
 import { MyRequests, type MyRequest } from "./my-requests";
+import { loadOpenShifts } from "@/lib/open-shifts";
+import { BoerseSection } from "./boerse-section";
+import { ChangesCard } from "./changes-card";
 import { MyTimeline, type PendingProposal } from "./my-timeline";
 import { SwapOffers, type SwapOffer } from "./swap-offers";
 
@@ -27,7 +30,11 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
   const sp = await searchParams;
   const weekStart = weekStartOf(sp.w && /^\d{4}-\d{2}-\d{2}$/.test(sp.w) ? parseDateOnly(sp.w) : toDateOnly(new Date()));
   const employeeId = user.employeeId;
-  const [data, me, offers, requests] = await Promise.all([
+  const todayDate = toDateOnly(new Date());
+  const [openShifts, myUpcoming, myAbsences, data, me, offers, requests] = await Promise.all([
+    loadOpenShifts(todayDate),
+    db.shift.findMany({ where: { employeeId, date: { gte: todayDate } }, select: { id: true, date: true, startMin: true, endMin: true } }),
+    db.absenceRequest.findMany({ where: { employeeId, status: "APPROVED", endDate: { gte: todayDate } } }),
     loadWeek(weekStart, { withWarnings: true }),
     db.employee.findUniqueOrThrow({ where: { id: employeeId } }),
     db.changeRequest.findMany({
@@ -44,6 +51,19 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
   ]);
 
   const published = data.status === "PUBLISHED";
+  const myChanges = data.changes.filter((c) => c.employeeId === employeeId);
+
+  // Schichtbörse: Warum kann ich eine offene Schicht nicht übernehmen?
+  const boerseConflicts: Record<string, string> = {};
+  for (const o of openShifts) {
+    if (o.offeredBy?.id === employeeId) continue;
+    const clash = myUpcoming.some(
+      (s) => formatDateOnly(s.date) === o.date && s.id !== o.sourceShiftId && s.startMin < o.endMin && s.endMin > o.startMin,
+    );
+    const absent = myAbsences.some((a) => formatDateOnly(a.startDate) <= o.date && formatDateOnly(a.endDate) >= o.date);
+    if (clash) boerseConflicts[o.id] = "du arbeitest zu dieser Zeit bereits";
+    else if (absent) boerseConflicts[o.id] = "du bist an diesem Tag abwesend";
+  }
   const myShifts = published ? data.shifts.filter((s) => s.employeeId === me.id) : [];
   const acts = Object.fromEntries(data.activities.map((a) => [a.id, a]));
   const planned = myShifts.reduce((s, sh) => s + workMinutes(sh.segments, acts), 0);
@@ -125,6 +145,7 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
               </div>
             </div>
           </div>
+          <ChangesCard changes={myChanges} publishedAt={data.publishedAt} />
           <MyTimeline
             me={data.employees.find((e) => e.id === me.id) ?? {
               id: me.id,
@@ -145,6 +166,7 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
             pending={pendingProposals}
             colleagues={colleagues}
             today={today}
+            changes={myChanges}
             rules={
               data.rules && {
                 // nur eigene Daten an den Browser geben
@@ -161,6 +183,13 @@ export default async function MyPlanPage({ searchParams }: { searchParams: Promi
           Der Plan für diese Woche wird gerade erstellt. Du bekommst eine Benachrichtigung, sobald er da ist.
         </EmptyState>
       )}
+
+      <BoerseSection
+        shifts={openShifts}
+        activities={data.activities}
+        myEmployeeId={employeeId}
+        conflicts={boerseConflicts}
+      />
 
       <MyRequests
         requests={requests.map(

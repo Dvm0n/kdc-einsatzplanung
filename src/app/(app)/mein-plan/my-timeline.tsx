@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ABSENCE_LABEL } from "@/lib/labels";
+import type { ShiftChange } from "@/lib/planning/changes";
 import { applyDrag, hitTest, snap, type DragHandle, type ShiftShape } from "@/lib/planning/resize";
 import { validateWeek, type AvailabilityBlock, type RuleSettings } from "@/lib/planning/rules";
 import { workMinutes } from "@/lib/planning/shifts";
@@ -48,7 +49,9 @@ export function MyTimeline({
   colleagues,
   today,
   rules,
+  changes = [],
 }: {
+  changes?: ShiftChange[];
   me: EmployeeDTO;
   days: string[];
   shifts: ShiftDTO[];
@@ -97,6 +100,13 @@ export function MyTimeline({
   }, [draft, rules, shown, me, activities, absences, serviceHours]);
 
   const pendingById = new Map(pending.map((p) => [p.shiftId, p]));
+  // Tage ohne Call-Zeiten (z. B. Sa/So) nur zeigen, wenn dort etwas geplant ist
+  const visibleDays = days.filter(
+    (d) =>
+      serviceHours.some((w) => w.weekday === isoWeekday(parseDateOnly(d))) ||
+      shifts.some((s) => s.date === d) ||
+      changes.some((c) => c.date === d),
+  );
   const weekWork = shown.reduce((s, sh) => s + workMinutes(sh.segments, acts), 0);
 
   function shapeOf(s: ShiftDTO): ShiftShape {
@@ -200,7 +210,7 @@ export function MyTimeline({
           </div>
         </div>
 
-        {days.map((d) => {
+        {visibleDays.map((d) => {
           const own = shown.filter((s) => s.date === d);
           const absence = absences.find((a) => a.startDate <= d && a.endDate >= d);
           const hol = holidays.find((h) => h.date === d);
@@ -239,8 +249,22 @@ export function MyTimeline({
                   </div>
                 )}
 
+                {changes
+                  .filter((c) => c.kind === "removed" && c.date === d)
+                  .map((c) => (
+                    <div
+                      key={`removed-${c.shiftId}`}
+                      title="Seit Veröffentlichung gestrichen"
+                      className="pointer-events-none absolute top-2.5 bottom-2.5 flex items-center justify-center rounded-md border-2 border-dashed border-muted-foreground/40 text-[10px] text-muted-foreground line-through"
+                      style={{ left: pct(c.before!.startMin), width: width(c.before!.startMin, c.before!.endMin) }}
+                    >
+                      gestrichen
+                    </div>
+                  ))}
+
                 {own.map((s) => {
                   const len = s.endMin - s.startMin;
+                  const change = changes.find((c) => c.shiftId === s.id && c.kind !== "removed");
                   const isDraft = draft?.shift.id === s.id;
                   const proposal = pendingById.get(s.id);
                   const canEdit = editable(s);
@@ -288,10 +312,16 @@ export function MyTimeline({
                             </div>
                           );
                         })}
-                        {proposal && (
+                        {proposal ? (
                           <Badge variant="secondary" className="pointer-events-none absolute -top-2 right-1 h-4 px-1.5 text-[10px]">
                             Antrag offen
                           </Badge>
+                        ) : (
+                          change && (
+                            <span className="pointer-events-none absolute -top-2 right-1 rounded bg-warning px-1 text-[9px] leading-3.5 font-semibold text-black/75">
+                              {change.kind === "new" ? "neu" : "geändert"}
+                            </span>
+                          )
                         )}
                         {isDraft && (
                           <div className="pointer-events-none absolute -top-5 left-1/2 -translate-x-1/2 rounded bg-foreground px-1.5 text-[10px] whitespace-nowrap text-background tabular-nums">

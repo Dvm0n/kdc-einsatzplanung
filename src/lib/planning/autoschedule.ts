@@ -8,7 +8,8 @@
  *    (nur für Mitarbeiter mit Outbound-Skill).
  */
 import { requiredBreak, type BreakRules } from "./shifts";
-import type { AbsenceDTO, EmployeeDTO, SegmentDTO, ShiftDTO } from "./types";
+import { classifyShift, type EdgeCounts } from "./fairness";
+import type { AbsenceDTO, EmployeeDTO, SegmentDTO, ServiceWindow, ShiftDTO } from "./types";
 import type { AvailabilityBlock } from "./rules";
 
 export interface AutoDay {
@@ -29,6 +30,8 @@ export interface AutoInput {
   activityIds: { inbound: string; outbound: string | null; break: string | null };
   settings: BreakRules & { maxHoursPerDay: number; minRestHours: number; intervalMinutes: number };
   options?: { fillOutbound?: boolean; minShiftMinutes?: number; step?: number };
+  /** Für faire Verteilung der Randzeiten: Call-Zeiten und bisherige Früh-/Spätschichten je Mitarbeiter */
+  fairness?: { windows: ServiceWindow[]; history: Record<string, EdgeCounts> };
 }
 
 export interface ProposedShift {
@@ -90,6 +93,31 @@ export function autoSchedule(input: AutoInput): AutoResult {
   }
 
   const result: ProposedShift[] = [];
+
+  // Faire Verteilung: Früh-/Spätschichten zählen (Historie + dieser Vorschlag)
+  const edges = new Map<string, EdgeCounts>(
+    Object.entries(input.fairness?.history ?? {}).map(([k, v]) => [k, { ...v }]),
+  );
+  function countEdge(empId: string, date: string, start: number, end: number) {
+    if (!input.fairness) return;
+    const k = classifyShift({ date, startMin: start, endMin: end }, input.fairness.windows);
+    const c = edges.get(empId) ?? { early: 0, late: 0, shifts: 0 };
+    c.shifts++;
+    if (k.early) c.early++;
+    if (k.late) c.late++;
+    edges.set(empId, c);
+  }
+  for (const s of input.existing) countEdge(s.employeeId, s.date, s.startMin, s.endMin);
+  /** Malus für Randzeiten bei überdurchschnittlich belasteten Mitarbeitern, Bonus bei unterdurchschnittlich */
+  function edgeBonus(emp: EmployeeDTO, date: string, start: number, end: number) {
+    if (!input.fairness) return 0;
+    const k = classifyShift({ date, startMin: start, endMin: end }, input.fairness.windows);
+    if (!k.early && !k.late) return 0;
+    const rate = (c: EdgeCounts | undefined) => (c && c.shifts ? (c.early + c.late) / c.shifts : 0);
+    const others = employees.filter((e) => edges.get(e.id)?.shifts);
+    const avg = others.length ? others.reduce((s, e) => s + rate(edges.get(e.id)), 0) / others.length : 0;
+    return -1.5 * (rate(edges.get(emp.id)) - avg);
+  }
 
   const dayAbs = (d: string) => Date.parse(d + "T00:00:00Z") / 60000;
 
@@ -181,8 +209,8 @@ export function autoSchedule(input: AutoInput): AutoResult {
             const fairness = remaining / Math.max(60, e.weeklyHours * 60);
             const score =
               mode === "inbound"
-                ? gain - 0.2 * Math.max(0, workH - gain) + (f.preferred ? 0.5 : 0) + 0.1 * fairness
-                : workH + 3 * gain + (f.preferred ? 0.5 : 0);
+                ? gain - 0.2 * Math.max(0, workH - gain) + (f.preferred ? 0.5 : 0) + 0.1 * fairness + edgeBonus(e, day.date, start, start + len)
+                : workH + 3 * gain + (f.preferred ? 0.5 : 0) + edgeBonus(e, day.date, start, start + len);
             if (!best || score > best.score + EPS) {
               best = { emp: e, day, dayIdx, start, end: start + len, work, score, gain };
             }
@@ -295,6 +323,7 @@ export function autoSchedule(input: AutoInput): AutoResult {
     coverageOf(c.day, segs).forEach((v, k) => (planned[c.dayIdx][k] += v));
     shiftsByEmp.set(c.emp.id, [...(shiftsByEmp.get(c.emp.id) ?? []), { date: c.day.date, startMin: c.start, endMin: c.end }]);
     workByEmp.set(c.emp.id, (workByEmp.get(c.emp.id) ?? 0) + c.work);
+    countEdge(c.emp.id, c.day.date, c.start, c.end);
     result.push({ employeeId: c.emp.id, date: c.day.date, startMin: c.start, endMin: c.end, segments: segs });
   }
 

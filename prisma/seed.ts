@@ -53,12 +53,11 @@ async function main() {
 
   await db.settings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
 
-  // Call-Zeiten: Mo–Fr 08–18, Sa 09–13
+  // Call-Zeiten: Mo–Fr 08–18 (Sa/So geschlossen)
   await db.serviceHours.deleteMany();
   await db.serviceHours.createMany({
     data: [
       ...[1, 2, 3, 4, 5].map((weekday) => ({ weekday, startMin: h(8), endMin: h(18) })),
-      { weekday: 6, startMin: h(9), endMin: h(13) },
     ],
   });
 
@@ -85,7 +84,6 @@ async function main() {
         { name: "Früh lang", startMin: h(8), endMin: h(14, 30), activityTypeId: inbound.id, sortOrder: 3 },
         { name: "Spät lang", startMin: h(11, 30), endMin: h(18), activityTypeId: inbound.id, sortOrder: 4 },
         { name: "Ganztag", startMin: h(8), endMin: h(16, 30), activityTypeId: inbound.id, sortOrder: 5 },
-        { name: "Samstag", startMin: h(9), endMin: h(13), activityTypeId: inbound.id, sortOrder: 6 },
         { name: "Outbound Nachmittag", startMin: h(13), endMin: h(17), activityTypeId: outbound.id, sortOrder: 7 },
       ],
     });
@@ -125,9 +123,9 @@ async function main() {
     for (let d = 0; d < 70; d++) {
       const date = addDays(from, d);
       const wd = date.getUTCDay() || 7;
-      if (wd === 7) continue;
-      const open = wd === 6 ? h(9) : h(8);
-      const close = wd === 6 ? h(13) : h(18);
+      if (wd >= 6) continue; // Sa/So geschlossen
+      const open = h(8);
+      const close = h(18);
       for (let m = open; m < close; m += 30) {
         const hour = m / 60;
         // Tagesverlauf: Spitze ~10:30, zweite Spitze ~14:30, Mittagsdelle
@@ -149,6 +147,8 @@ async function main() {
   const thisMonday = mondayOf(new Date());
   await seedDemoWeek(thisMonday);
   await seedDemoWeek(addDays(thisMonday, 7));
+  await snapshotWeek(thisMonday);
+  await snapshotWeek(addDays(thisMonday, 7));
 
   console.log("Seed fertig.");
 }
@@ -177,10 +177,10 @@ async function seedDemoWeek(weekStart: Date) {
     { name: "Katrin", days: [1, 2, 3, 4, 5], start: h(8), end: h(14, 30) },
     { name: "David", days: [1, 2, 3, 4], start: h(12), end: h(17) },
     { name: "Elif", days: [3], start: h(14), end: h(18) },
-    { name: "Elif", days: [6], start: h(9), end: h(13) },
+    { name: "Elif", days: [4], start: h(14), end: h(18) },
     { name: "Elif", days: [5], start: h(16), end: h(18) },
     { name: "Paul", days: [2, 3, 4, 5], start: h(10), end: h(14) },
-    { name: "Paul", days: [6], start: h(9), end: h(13) },
+    { name: "Paul", days: [1], start: h(10), end: h(14) },
   ];
 
   for (const p of plans) {
@@ -223,3 +223,22 @@ main()
     process.exit(1);
   })
   .finally(() => db.$disconnect());
+
+/** Veröffentlichungsstand merken (Grundlage für „Was hat sich geändert?“), falls noch keiner existiert */
+async function snapshotWeek(weekStart: Date) {
+  const week = await db.scheduleWeek.findUnique({ where: { weekStart } });
+  if (!week || week.status !== "PUBLISHED" || week.publishedSnapshot) return;
+  const shifts = await db.shift.findMany({
+    where: { date: { gte: weekStart, lte: addDays(weekStart, 6) } },
+    include: { segments: true },
+  });
+  const snapshot = shifts.map((s) => ({
+    id: s.id,
+    employeeId: s.employeeId,
+    date: s.date.toISOString().slice(0, 10),
+    startMin: s.startMin,
+    endMin: s.endMin,
+    segments: s.segments.map(({ activityTypeId, startMin, endMin }) => ({ activityTypeId, startMin, endMin })),
+  }));
+  await db.scheduleWeek.update({ where: { id: week.id }, data: { publishedSnapshot: snapshot } });
+}

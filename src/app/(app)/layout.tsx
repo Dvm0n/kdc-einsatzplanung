@@ -11,7 +11,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const planner = isPlanner(user.role);
 
   // alle Abfragen gleichzeitig – jede Runde zur Datenbank kostet Zeit
-  const [notifications, unread, changes, absences, swaps] = await Promise.all([
+  const [notifications, unread, changes, absences, swaps, bids] = await Promise.all([
     db.notification.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 15 }),
     db.notification.count({ where: { userId: user.id, readAt: null } }),
     planner
@@ -19,8 +19,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       : 0,
     planner ? db.absenceRequest.count({ where: { status: "PENDING" } }) : 0,
     planner ? db.changeRequest.count({ where: { status: "PEER_ACCEPTED", type: "SWAP" } }) : 0,
+    // Schichtbörse: offene Schichten mit Meldungen warten auf Zuteilung
+    planner ? db.openShift.count({ where: { status: "OPEN", bids: { some: {} } } }) : 0,
   ]);
-  const pending = changes + absences + swaps;
+  const pending = changes + absences + swaps + bids;
   const notificationItems: NotificationItem[] = notifications.map((n) => ({
     id: n.id,
     title: n.title,

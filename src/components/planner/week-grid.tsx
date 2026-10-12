@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Plus } from "lucide-react";
+import { Hand, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { moveShift } from "@/app/(app)/plan/actions";
+import type { ShiftChange } from "@/lib/planning/changes";
 import { workMinutes } from "@/lib/planning/shifts";
 import type { ActivityDTO, ShiftDTO } from "@/lib/planning/types";
 import type { WeekData } from "@/lib/schedule";
@@ -11,7 +12,9 @@ import { fmtDay, minToHHMM, parseDateOnly } from "@/lib/time";
 import { ABSENCE_LABEL } from "@/lib/labels";
 import { cn } from "@/lib/utils";
 import type { DayDemand } from "@/lib/demand";
+import type { OpenShiftDTO } from "@/lib/open-shifts";
 import { CoverageStrip } from "./coverage-chart";
+import { OpenShiftChip } from "./open-shift-dialogs";
 import { SegmentStrip } from "./shift-bar";
 
 const hrs = (m: number) => (m / 60).toLocaleString("de-DE", { maximumFractionDigits: 1 });
@@ -24,8 +27,15 @@ export function WeekGrid({
   onCreate,
   onOpenDay,
   demandByDate,
+  visibleDays,
+  onOpenShift,
+  onCreateOpenShift,
 }: {
   demandByDate?: Record<string, DayDemand>;
+  /** angezeigte Tage (geschlossene Tage ggf. ausgeblendet) */
+  visibleDays?: string[];
+  onOpenShift?: (o: OpenShiftDTO) => void;
+  onCreateOpenShift?: (date: string) => void;
   data: WeekData;
   canEdit: boolean;
   highlightEmployeeId?: string | null;
@@ -39,6 +49,20 @@ export function WeekGrid({
   >;
   const [dragOver, setDragOver] = useState<string | null>(null);
   const [, startTransition] = useTransition();
+
+  // „Was hat sich geändert?“ seit der Veröffentlichung
+  const changeById = useMemo(
+    () => new Map(data.changes.filter((c) => c.kind !== "removed").map((c) => [c.shiftId, c])),
+    [data.changes],
+  );
+  const removedByCell = useMemo(() => {
+    const m = new Map<string, ShiftChange[]>();
+    for (const c of data.changes.filter((x) => x.kind === "removed")) {
+      const k = `${c.employeeId}|${c.date}`;
+      m.set(k, [...(m.get(k) ?? []), c]);
+    }
+    return m;
+  }, [data.changes]);
 
   const byCell = useMemo(() => {
     const m = new Map<string, ShiftDTO[]>();
@@ -55,6 +79,7 @@ export function WeekGrid({
     return m;
   }, [data.warnings]);
 
+  const days = visibleDays ?? data.days;
   const holidayByDate = Object.fromEntries(data.holidays.map((h) => [h.date, h]));
   const today = new Date().toISOString().slice(0, 10);
 
@@ -82,10 +107,13 @@ export function WeekGrid({
 
   return (
     <div className="overflow-x-auto rounded-2xl border bg-card">
-      <div className="grid min-w-[860px] grid-cols-[124px_repeat(7,minmax(0,1fr))] md:min-w-[980px] md:grid-cols-[200px_repeat(7,minmax(0,1fr))]">
+      <div
+        className="grid grid-cols-[124px_repeat(var(--cols),minmax(0,1fr))] md:grid-cols-[200px_repeat(var(--cols),minmax(0,1fr))]"
+        style={{ "--cols": days.length, minWidth: 124 + days.length * 105 } as React.CSSProperties}
+      >
         {/* Kopfzeile */}
         <div className="sticky left-0 z-10 border-b bg-card px-3 py-3 text-xs text-muted-foreground md:px-4">Mitarbeiter</div>
-        {data.days.map((d) => {
+        {days.map((d) => {
           const hol = holidayByDate[d];
           return (
             <button
@@ -118,6 +146,47 @@ export function WeekGrid({
             </button>
           );
         })}
+
+        {/* Schichtbörse */}
+        {(canEdit || data.openShifts.length > 0) && (
+          <div className="contents">
+            <div className="sticky left-0 z-10 flex items-center gap-2 border-b bg-primary/[0.04] px-3 py-2.5 md:px-4">
+              <span className="flex size-8 shrink-0 items-center justify-center rounded-full border-2 border-dashed border-primary/50 text-primary max-md:hidden">
+                <Hand className="size-3.5" />
+              </span>
+              <div className="leading-tight">
+                <div className="text-sm font-medium">Offene Schichten</div>
+                <div className="text-xs text-muted-foreground">Schichtbörse</div>
+              </div>
+            </div>
+            {days.map((d) => {
+              const list = data.openShifts.filter((o) => o.date === d);
+              return (
+                <div key={`open-${d}`} className="group flex min-h-12 flex-col gap-1 border-b border-l bg-primary/[0.04] p-1.5">
+                  {list.map((o) => (
+                    <OpenShiftChip
+                      key={o.id}
+                      shift={o}
+                      activities={acts}
+                      onClick={() => onOpenShift?.(o)}
+                      highlight={!!highlightEmployeeId && o.bids.some((b) => b.employeeId === highlightEmployeeId)}
+                    />
+                  ))}
+                  {canEdit && (
+                    <button
+                      type="button"
+                      aria-label="Schicht ausschreiben"
+                      onClick={() => onCreateOpenShift?.(d)}
+                      className="flex min-h-6 flex-1 items-center justify-center rounded-lg text-xs text-muted-foreground opacity-0 transition group-hover:opacity-100 hover:bg-muted focus-visible:opacity-100"
+                    >
+                      <Plus className="size-3.5" /> ausschreiben
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         {/* Zeilen */}
         {data.employees.map((emp) => {
@@ -162,7 +231,7 @@ export function WeekGrid({
                 </div>
               </div>
 
-              {data.days.map((d) => {
+              {days.map((d) => {
                 const key = `${emp.id}|${d}`;
                 const cellShifts = byCell.get(key) ?? [];
                 const absence = data.absences.find((a) => a.employeeId === emp.id && a.startDate <= d && a.endDate >= d);
@@ -204,16 +273,32 @@ export function WeekGrid({
                           e.dataTransfer.effectAllowed = "copyMove";
                         }}
                         onClick={() => canEdit && onEdit?.(s)}
+                        title={changeTitle(changeById.get(s.id))}
                         className={cn(
-                          "w-full rounded-lg border bg-background px-2 py-1.5 text-left shadow-xs transition",
+                          "relative w-full rounded-lg border bg-background px-2 py-1.5 text-left shadow-xs transition",
                           canEdit ? "cursor-grab hover:border-primary/50 active:cursor-grabbing" : "cursor-default",
+                          changeById.has(s.id) && "border-warning/60",
                         )}
                       >
-                        <div className="mb-1 text-xs font-medium tabular-nums">
+                        <div className="mb-1 text-xs font-medium whitespace-nowrap tabular-nums max-xl:text-[11px]">
                           {minToHHMM(s.startMin)}–{minToHHMM(s.endMin)}
                         </div>
                         <SegmentStrip startMin={s.startMin} endMin={s.endMin} segments={s.segments} activities={acts} />
+                        {changeById.has(s.id) && (
+                          <span className="absolute -top-1.5 right-1 rounded bg-warning px-1 text-[9px] leading-3.5 font-semibold text-black/75">
+                            {changeById.get(s.id)!.kind === "new" ? "neu" : "geändert"}
+                          </span>
+                        )}
                       </button>
+                    ))}
+                    {(removedByCell.get(key) ?? []).map((c) => (
+                      <div
+                        key={`removed-${c.shiftId}`}
+                        title={`Gestrichen seit Veröffentlichung (vorher ${minToHHMM(c.before!.startMin)}–${minToHHMM(c.before!.endMin)})`}
+                        className="rounded-lg border border-dashed px-2 py-1 text-[11px] text-muted-foreground line-through tabular-nums"
+                      >
+                        {minToHHMM(c.before!.startMin)}–{minToHHMM(c.before!.endMin)}
+                      </div>
                     ))}
                     {canEdit && (
                       <button
@@ -237,4 +322,10 @@ export function WeekGrid({
       </div>
     </div>
   );
+}
+
+function changeTitle(c: ShiftChange | undefined) {
+  if (!c) return undefined;
+  if (c.kind === "new") return "Neu seit Veröffentlichung";
+  return `Geändert seit Veröffentlichung – vorher ${minToHHMM(c.before!.startMin)}–${minToHHMM(c.before!.endMin)}`;
 }
