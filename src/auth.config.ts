@@ -10,6 +10,7 @@ export const authConfig = {
     authorized({ auth, request }) {
       const { pathname } = request.nextUrl;
       const isPublic =
+        pathname === "/demo" ||
         pathname.startsWith("/login") ||
         pathname.startsWith("/einladung") ||
         pathname.startsWith("/api/auth") ||

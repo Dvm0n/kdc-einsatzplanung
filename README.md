@@ -70,3 +70,13 @@ Unterstützt: Datum als `TT.MM.JJJJ`, `JJJJ-MM-TT` oder Excel-Datum, Uhrzeit sep
 
 Next.js 15 (App Router, Server Actions) · TypeScript · Tailwind CSS + shadcn/ui · Prisma + PostgreSQL · Auth.js ·
 Recharts · Vitest. Zeiten werden als Datum + Minuten seit Mitternacht (Europe/Berlin) gespeichert.
+
+## Vollständige öffentliche Portfolio-Demo
+
+Branch `codex/portfolio-original-demo`, eigenes Vercel-Projekt `kdc-portfolio-demo`. Alle bestehenden Planungsoberflächen, Server Actions, Berechnungen und Prisma-Modelle bleiben unverändert.
+
+Der zusätzliche Einstieg `/demo` meldet Besucher wahlweise als fiktiven Administrator oder Operator an. Er funktioniert nur bei `DEMO_MODE=true` und ausschließlich, wenn beide Datenbank-URLs auf die Datenbank `portfolio_demo` mit Benutzer `portfolio_demo_app` verweisen. Ohne diese Kombination bleibt die passwortfreie Anmeldung gesperrt. Das reguläre Login funktioniert weiterhin.
+
+Die Demo nutzt eine eigene Datenbank und einen eigenen eingeschränkten Datenbankbenutzer auf der vorhandenen Neon-Infrastruktur. Sie hat einen eigenen Authentifizierungsschlüssel. Der Seed erzeugt ausschließlich die vorhandenen fiktiven Testdaten; keine Daten aus der Originalumgebung wurden kopiert. Externe E-Mails werden im Demomodus nur lokal protokolliert.
+
+Die Daten sind gemeinsam genutzt: Änderungen werden gespeichert und sind für andere Besucher sichtbar. Für spätere Aktualisierungen aus diesem Branch im verknüpften Verzeichnis `vercel deploy --prod --scope team_UWlk7P8VpnwB5dpj9K96nPXH` verwenden und zuvor das Zielprojekt prüfen. Die Bereitstellung ist absichtlich nicht mit automatischen Deploys von `main` verbunden. Migrationen laufen über `vercel-build`; der Seed wird nur gezielt gegen die Demo-Datenbank ausgeführt. Geheimnisse werden ausschließlich in Vercel beziehungsweise lokalen ignorierten Umgebungsdateien gespeichert.

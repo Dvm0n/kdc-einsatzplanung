@@ -1,8 +1,10 @@
+import { publicDemoEnabled } from "@/lib/public-demo";
+
 /**
  * E-Mail-Versand über Resend (wenn RESEND_API_KEY gesetzt ist), sonst Ausgabe in der Konsole.
  */
 export async function sendMail({ to, subject, text }: { to: string; subject: string; text: string }) {
-  const key = process.env.RESEND_API_KEY;
+  const key = publicDemoEnabled() ? undefined : process.env.RESEND_API_KEY;
   if (!key) {
     console.info(`\n[Mail an ${to}] ${subject}\n${text}\n`);
     return;

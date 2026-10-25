@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
 import { LoginForm } from "./login-form";
+import { publicDemoEnabled } from "@/lib/public-demo";
 
 export default async function LoginPage() {
   const session = await auth();
@@ -17,6 +18,7 @@ export default async function LoginPage() {
           <p className="text-sm text-muted-foreground">Melde dich mit deiner E-Mail-Adresse an.</p>
         </div>
         <LoginForm />
+        {publicDemoEnabled() && <a className="mt-5 block text-center text-sm underline underline-offset-4" href="/demo">Demo als Planer oder Operator öffnen</a>}
       </div>
     </main>
   );
