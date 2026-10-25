@@ -1,0 +1,5 @@
+.playwright-cli/
+.next-dev/
+.next-build/
+.env*
+docs/screenshots/
